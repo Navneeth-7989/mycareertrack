@@ -32,9 +32,17 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+# ...but .env.example documents required vars and must be committed
+!.env.example
 
 # vercel
 .vercel
+
+# local planning notes / internal design docs
+/docs
+
+# claude code
+.claude
 
 # typescript
 *.tsbuildinfo
