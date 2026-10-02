@@ -1,0 +1,16 @@
+# Normalize line endings to LF in the repository and in the working tree.
+# Without this, core.autocrlf=true on Windows checks files out as CRLF while
+# Prettier is configured with endOfLine: "lf", so `format:check` fails locally
+# but passes on Linux CI. Pinning eol=lf keeps both consistent.
+* text=auto eol=lf
+
+# Binary files git must never touch.
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.webp  binary
+*.pdf   binary
+*.woff  binary
+*.woff2 binary

@@ -1,0 +1,144 @@
+// CareerTrack database schema.
+//
+// Design reference: docs/DESIGN.md §3. Models arrive in two commits — this one
+// carries Auth.js's required models plus User and Profile; the application
+// domain follows.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  // Connection URLs live in prisma.config.ts as of Prisma 7 — `url` and
+  // `directUrl` are no longer accepted here. Runtime connects through the
+  // driver adapter in src/server/db.ts.
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum WorkMode {
+  REMOTE
+  HYBRID
+  ONSITE
+}
+
+enum ViewPreference {
+  KANBAN
+  TABLE
+}
+
+// ---------------------------------------------------------------------------
+// Auth.js models
+//
+// Shapes are dictated by the Prisma adapter — the snake_case token columns are
+// the adapter's expectation, not a style choice.
+// ---------------------------------------------------------------------------
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// ---------------------------------------------------------------------------
+// User
+// ---------------------------------------------------------------------------
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String    @unique
+  emailVerified DateTime?
+  image         String?
+
+  // Null for OAuth-only accounts. Nullable here is what lets one account work
+  // across Google, GitHub and email/password.
+  passwordHash String?
+
+  timezone            String         @default("Asia/Kolkata")
+  defaultView         ViewPreference @default(KANBAN)
+  onboardingCompleted Boolean        @default(false)
+
+  // Notification preferences, flattened rather than a 1:1 table — see
+  // DESIGN.md §10.1. Defaults mean they can never be missing.
+  notifyInterviews  Boolean @default(true)
+  notifyAssessments Boolean @default(true)
+  notifyDeadlines   Boolean @default(true)
+  notifyTasks       Boolean @default(true)
+  reminderHours     Int     @default(24)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  accounts Account[]
+  sessions Session[]
+  profile  Profile?
+}
+
+// ---------------------------------------------------------------------------
+// Profile
+//
+// Split from User because User is partly owned by Auth.js and these are our
+// own fields.
+// ---------------------------------------------------------------------------
+
+model Profile {
+  id     String @id @default(cuid())
+  userId String @unique
+
+  university     String?
+  degree         String?
+  graduationYear Int?
+
+  // Free text, private to one user, never queried relationally — Postgres
+  // arrays rather than three join tables. See DESIGN.md §3.
+  targetRoles        String[]
+  skills             String[]
+  preferredLocations String[]
+  preferredWorkMode  WorkMode?
+
+  linkedinUrl  String?
+  githubUrl    String?
+  portfolioUrl String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
