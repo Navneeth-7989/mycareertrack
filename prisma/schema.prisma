@@ -1,8 +1,8 @@
 // CareerTrack database schema.
 //
-// Design reference: docs/DESIGN.md §3. Models arrive in two commits — this one
-// carries Auth.js's required models plus User and Profile; the application
-// domain follows.
+// Design reference: docs/DESIGN.md §3, which carries the reasoning behind each
+// model, every index, and the delete behaviours. Comments here record the
+// non-obvious decisions only.
 
 generator client {
   provider = "prisma-client-js"
@@ -28,6 +28,90 @@ enum WorkMode {
 enum ViewPreference {
   KANBAN
   TABLE
+}
+
+enum ApplicationStatus {
+  SAVED
+  APPLIED
+  SCREENING
+  ASSESSMENT
+  INTERVIEW
+  OFFER
+  ACCEPTED
+  REJECTED
+  WITHDRAWN
+}
+
+enum EmploymentType {
+  INTERNSHIP
+  FULL_TIME
+  PART_TIME
+  CONTRACT
+}
+
+enum Priority {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum ApplicationSource {
+  LINKEDIN
+  COMPANY_WEBSITE
+  REFERRAL
+  COLLEGE
+  INDEED
+  OTHER
+}
+
+enum InterviewType {
+  HR
+  TECHNICAL
+  BEHAVIORAL
+  MANAGERIAL
+  SYSTEM_DESIGN
+  OTHER
+}
+
+enum InterviewResult {
+  PENDING
+  PASSED
+  FAILED
+  CANCELLED
+}
+
+enum AssessmentStatus {
+  PENDING
+  COMPLETED
+  PASSED
+  FAILED
+}
+
+enum EventType {
+  SAVED
+  APPLIED
+  STATUS_CHANGE
+  EMAIL_RECEIVED
+  ASSESSMENT
+  INTERVIEW
+  FOLLOW_UP
+  OFFER
+  REJECTION
+  CUSTOM
+}
+
+enum NotificationType {
+  INTERVIEW_UPCOMING
+  ASSESSMENT_DEADLINE
+  APPLICATION_DEADLINE
+  TASK_DUE
+}
+
+enum NotifiableEntity {
+  INTERVIEW
+  ASSESSMENT
+  APPLICATION
+  TASK
 }
 
 // ---------------------------------------------------------------------------
@@ -106,9 +190,19 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  accounts Account[]
-  sessions Session[]
-  profile  Profile?
+  accounts          Account[]
+  sessions          Session[]
+  profile           Profile?
+  companies         Company[]
+  applications      Application[]
+  applicationEvents ApplicationEvent[]
+  interviews        Interview[]
+  assessments       Assessment[]
+  contacts          Contact[]
+  resumes           Resume[]
+  tasks             Task[]
+  notes             Note[]
+  notifications     Notification[]
 }
 
 // ---------------------------------------------------------------------------
@@ -141,4 +235,357 @@ model Profile {
   updatedAt DateTime @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// ---------------------------------------------------------------------------
+// Company
+//
+// Two-tier visibility: seeded companies (createdByUserId = null) appear in
+// everyone's autocomplete, user-created ones only in their creator's — so a
+// private company name cannot leak through the suggestion list.
+// ---------------------------------------------------------------------------
+
+model Company {
+  id String @id @default(cuid())
+
+  name           String // display casing: "JPMorgan Chase"
+  nameNormalized String // match key: "jpmorgan chase"
+  website        String?
+
+  isSeeded        Boolean @default(false)
+  createdByUserId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  createdBy    User?         @relation(fields: [createdByUserId], references: [id], onDelete: Cascade)
+  applications Application[]
+
+  // Covers user-created companies only. Postgres treats NULLs as distinct, so
+  // this will not stop two seeded rows sharing a name — that needs a partial
+  // unique index, added as raw SQL in a separate migration.
+  @@unique([createdByUserId, nameNormalized])
+  @@index([nameNormalized])
+}
+
+// ---------------------------------------------------------------------------
+// Application — the centre of the schema
+// ---------------------------------------------------------------------------
+
+model Application {
+  id        String @id @default(cuid())
+  userId    String
+  companyId String
+
+  jobTitle String
+  jobUrl   String?
+  location String?
+
+  workMode       WorkMode?
+  employmentType EmploymentType?
+
+  salaryMin Int?
+  salaryMax Int?
+  currency  String? @default("INR")
+
+  status   ApplicationStatus  @default(SAVED)
+  priority Priority           @default(MEDIUM)
+  source   ApplicationSource?
+
+  savedAt   DateTime  @default(now())
+  appliedAt DateTime?
+  deadline  DateTime?
+
+  jobDescription String? @db.Text
+
+  resumeId String?
+
+  // Written once, never overwritten, on the first qualifying status change or
+  // EMAIL_RECEIVED event. Stored rather than derived so the analytics queries
+  // stay simple aggregations. See DESIGN.md §3 "Metric definitions".
+  firstResponseAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // Restrict, not Cascade: deleting a company or hard-deleting a resume that
+  // applications point at should fail loudly rather than mangle data.
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  resume  Resume? @relation(fields: [resumeId], references: [id], onDelete: Restrict)
+
+  events      ApplicationEvent[]
+  interviews  Interview[]
+  assessments Assessment[]
+  notes       Note[]
+  tasks       Task[]
+  contacts    ApplicationContact[]
+
+  // Every index earns its place — see the justification table in DESIGN.md §3.
+  // Deliberately not indexed: priority, workMode, employmentType, source,
+  // currency. They are low-cardinality and always filter alongside userId, so
+  // the leading-userId indexes already narrow the scan to one user's rows.
+  @@index([userId, status])
+  @@index([userId, createdAt])
+  @@index([userId, appliedAt])
+  @@index([userId, deadline])
+  @@index([companyId])
+}
+
+// ---------------------------------------------------------------------------
+// ApplicationEvent — timeline
+//
+// The denormalized userId here and on every child model below is deliberate:
+// it lets the dashboard query "my upcoming interviews across all applications"
+// without a join, and makes the ownership rule in DESIGN.md §4 uniform enough
+// to be hard to forget.
+// ---------------------------------------------------------------------------
+
+model ApplicationEvent {
+  id            String @id @default(cuid())
+  userId        String
+  applicationId String
+
+  type        EventType
+  title       String
+  description String?   @db.Text
+  occurredAt  DateTime
+  // Distinguishes system-generated entries from ones the user wrote, so the UI
+  // can style them differently and keep manual ones editable.
+  isAutomatic Boolean   @default(false)
+
+  createdAt DateTime @default(now())
+
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  application Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  @@index([applicationId, occurredAt])
+  // Serves "ever reached INTERVIEW", which needs history rather than current
+  // status — a rejected candidate who interviewed still counts.
+  @@index([userId, type, occurredAt])
+}
+
+// ---------------------------------------------------------------------------
+// Interview
+// ---------------------------------------------------------------------------
+
+model Interview {
+  id            String @id @default(cuid())
+  userId        String
+  applicationId String
+
+  type        InterviewType
+  scheduledAt DateTime // UTC
+  endsAt      DateTime?
+  meetingUrl  String?
+
+  // Free text rather than a Contact link: interviewer names usually arrive in
+  // a calendar invite with no email, and a contact picker would add friction
+  // at the most time-pressured moment in the product.
+  interviewerName String?
+
+  notes     String?         @db.Text
+  prepNotes String?         @db.Text
+  result    InterviewResult @default(PENDING)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  application Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  @@index([userId, scheduledAt])
+  @@index([applicationId])
+}
+
+// ---------------------------------------------------------------------------
+// Assessment
+// ---------------------------------------------------------------------------
+
+model Assessment {
+  id            String @id @default(cuid())
+  userId        String
+  applicationId String
+
+  name     String
+  provider String?
+  url      String?
+  deadline DateTime?
+  status   AssessmentStatus @default(PENDING)
+  // String, not Int — real scores look like "180/200", "85%" and
+  // "Passed with distinction".
+  score    String?
+  notes    String?          @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  application Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  @@index([userId, deadline])
+  @@index([applicationId])
+}
+
+// ---------------------------------------------------------------------------
+// Contact & ApplicationContact
+// ---------------------------------------------------------------------------
+
+model Contact {
+  id     String @id @default(cuid())
+  userId String
+
+  name        String
+  role        String?
+  email       String?
+  phone       String?
+  linkedinUrl String?
+  notes       String? @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user         User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  applications ApplicationContact[]
+
+  // Postgres treats NULLs as distinct, so any number of contacts without an
+  // email is allowed while the same email cannot be stored twice for one user
+  // — exactly the guarantee auto-creation from the application form needs.
+  @@unique([userId, email])
+  @@index([userId])
+}
+
+model ApplicationContact {
+  applicationId String
+  contactId     String
+  // Their role on THIS application: "HR", "Hiring Manager", "Referrer". Lives
+  // on the join because the same person can be a referrer on one application
+  // and the hiring manager on another.
+  role          String?
+  createdAt     DateTime @default(now())
+
+  application Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  contact     Contact     @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@id([applicationId, contactId])
+  @@index([contactId])
+}
+
+// ---------------------------------------------------------------------------
+// Resume
+//
+// Soft delete: deleting removes the file from Supabase for real and stamps
+// deletedAt. The row survives so applications that used it still display
+// "Frontend Resume (deleted)" — preserving which version got the interview,
+// which was the point of the feature.
+// ---------------------------------------------------------------------------
+
+model Resume {
+  id     String @id @default(cuid())
+  userId String
+
+  label       String // "Frontend Resume"
+  fileName    String // original upload name
+  // Path within the private Supabase bucket. Never reaches the browser —
+  // downloads go through our API, which checks ownership then returns a
+  // short-lived signed URL.
+  storagePath String
+  fileSize    Int
+  mimeType    String
+  isDefault   Boolean @default(false)
+
+  deletedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  applications Application[]
+
+  @@index([userId, deletedAt])
+}
+
+// ---------------------------------------------------------------------------
+// Task
+// ---------------------------------------------------------------------------
+
+model Task {
+  id            String  @id @default(cuid())
+  userId        String
+  applicationId String? // nullable — standalone tasks are allowed
+
+  title       String
+  description String?   @db.Text
+  dueDate     DateTime?
+  priority    Priority  @default(MEDIUM)
+  isCompleted Boolean   @default(false)
+  completedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  application Application? @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  // Matches the actual query: my tasks, incomplete, ordered by due date —
+  // which is every view on the tasks page and the dashboard.
+  @@index([userId, isCompleted, dueDate])
+}
+
+// ---------------------------------------------------------------------------
+// Note
+//
+// One model, as decided — there is no Application.notes column. Notes are
+// always rows, so they can be added, edited and deleted individually.
+// ---------------------------------------------------------------------------
+
+model Note {
+  id            String @id @default(cuid())
+  userId        String
+  applicationId String
+
+  content String @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  application Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  @@index([applicationId, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Notification
+//
+// A generic entityType + entityId + linkUrl rather than four nullable foreign
+// keys, which would mean four joins to render one list plus a CHECK constraint.
+// The cost is losing referential integrity on the link, handled by resolving
+// the target at render time and skipping notifications whose target is gone.
+// ---------------------------------------------------------------------------
+
+model Notification {
+  id     String @id @default(cuid())
+  userId String
+
+  type  NotificationType
+  title String
+  body  String?
+
+  entityType NotifiableEntity
+  entityId   String
+  linkUrl    String
+
+  isRead    Boolean  @default(false)
+  triggerAt DateTime // eventAt minus the user's reminderHours
+  eventAt   DateTime // the thing being reminded about
+
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Load-bearing: this is what stops the same interview generating a new
+  // notification on every page load. Generation is an upsert against it.
+  @@unique([userId, type, entityId])
+  @@index([userId, isRead, triggerAt])
 }
