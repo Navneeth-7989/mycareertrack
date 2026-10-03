@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="CareerTrack">
+  <!--
+    The browser-tab icon: the CareerTrack mark on its brand blue, matching
+    components/brand/logo.tsx and the --primary token.
+
+    favicon.ico beside this file is the raster twin, and the two are kept
+    identical on purpose — same geometry, same gradient. Modern browsers take
+    this SVG and stay sharp at any density; the .ico is what answers the bare
+    /favicon.ico request that older clients and Chrome's favicon cache make.
+
+    Two deliberate differences from the in-app mark. The bars are solid white
+    rather than stepping through 50/75/100% opacity — at 16px those steps turn
+    to mud on blue, and the ascending heights carry the meaning on their own.
+    And the tile is filled rather than transparent, so the icon holds its shape
+    against a light or a dark browser theme alike.
+  -->
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1F80D8" />
+      <stop offset="1" stop-color="#0A5EB4" />
+    </linearGradient>
+  </defs>
+
+  <rect width="32" height="32" rx="6.4" fill="url(#tile)" />
+
+  <g fill="#ffffff">
+    <rect x="6" y="18" width="5.6" height="8" rx="1.8" />
+    <rect x="13.2" y="12.5" width="5.6" height="13.5" rx="1.8" />
+    <rect x="20.4" y="6" width="5.6" height="20" rx="1.8" />
+  </g>
+</svg>
