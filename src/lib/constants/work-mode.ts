@@ -17,3 +17,12 @@ export const WORK_MODE_LABELS: Record<WorkModeValue, string> = {
   HYBRID: "Hybrid",
   ONSITE: "On-site",
 };
+
+/**
+ * Narrows the `string[]` a checkbox group hands back to the enum values. The
+ * group's contract is plain strings, so this is the one place that turns
+ * "whatever was ticked" into something the schema and Prisma will accept.
+ */
+export function isWorkMode(value: string): value is WorkModeValue {
+  return (WORK_MODES as readonly string[]).includes(value);
+}

@@ -34,6 +34,27 @@ function requiredText(label: string, max: number) {
 }
 
 /**
+ * Optional free text, stored as null when blank.
+ *
+ * Same reasoning as `optionalUrl` below: a nullable column holding empty
+ * strings means every read has to treat "" and null as the same thing, and
+ * eventually one of them forgets.
+ */
+function optionalText(label: string, max: number) {
+  return (
+    z
+      .string()
+      .trim()
+      .max(max, { error: `${label} must be at most ${max} characters` })
+      // Absent and blank mean the same thing — nothing was answered. Accepting
+      // both keeps a client that simply omits the key from getting a 400 over a
+      // field that was never required in the first place.
+      .optional()
+      .transform((value) => (value === undefined || value === "" ? null : value))
+  );
+}
+
+/**
  * Nobody types the scheme. "linkedin.com/in/navneet" is what comes out of a
  * copy-paste from the address bar, and rejecting it over a missing "https://"
  * is the kind of validation that makes a form feel hostile — so it is added
@@ -171,10 +192,27 @@ function tagList(label: string) {
   );
 }
 
-/** The radio group's "no preference" option submits "", which means null. */
-const preferredWorkMode = z
-  .union([z.literal(""), z.enum(WORK_MODES)])
-  .transform((value) => (value === "" ? null : value));
+/**
+ * Work modes the user would accept — a list, because "remote or hybrid, but not
+ * on-site" is the normal answer.
+ *
+ * An empty list is "no preference": there is no separate null, and no sentinel
+ * option to submit, so the three states the single-value version had (a mode,
+ * an explicit "no preference", or nothing) collapse into one honest one.
+ *
+ * The transform sorts the selection into `WORK_MODES` order rather than keeping
+ * the order ticked, which also de-duplicates. Two users who want the same two
+ * modes should have identical rows regardless of which box they clicked first —
+ * otherwise anything grouping on this column later sees phantom variety.
+ */
+const preferredWorkModes = z
+  .array(z.enum(WORK_MODES))
+  .optional()
+  .transform((values) => {
+    const chosen = new Set(values ?? []);
+
+    return WORK_MODES.filter((mode) => chosen.has(mode));
+  });
 
 /**
  * Never fails. See DESIGN.md §10.4 — detection is primary, the fallback is for
@@ -193,10 +231,24 @@ const timezone = z
     return isValidTimeZone(trimmed) ? trimmed : FALLBACK_TIMEZONE;
   });
 
+/**
+ * University, degree and field of study are offered as curated lists in the
+ * wizard (see `lib/constants/`), but all three validate as free text here, on
+ * purpose.
+ *
+ * No shippable list covers 40,000-plus Indian colleges, every qualification or
+ * every specialisation, and a student holding something we failed to list has to
+ * be able to finish signing up. The lists exist to make the common case one
+ * click and to keep spellings consistent — not to reject the long tail.
+ *
+ * Field of study is the one that may be blank: it is meaningless for an MBBS or
+ * an LL.B, and DESIGN.md §9's required set deliberately omits it.
+ */
 export const onboardingStepOneSchema = z.object({
   name: requiredText("Full name", 100),
   university: requiredText("University", 150),
   degree: requiredText("Degree", 150),
+  fieldOfStudy: optionalText("Field of study", 120),
   graduationYear,
 });
 
@@ -210,7 +262,7 @@ export const onboardingStepThreeSchema = z.object({
   targetRoles: tagList("target roles"),
   skills: tagList("skills"),
   preferredLocations: tagList("locations"),
-  preferredWorkMode,
+  preferredWorkModes,
 });
 
 /**
@@ -238,7 +290,7 @@ export type OnboardingPayload = z.output<typeof onboardingSchema>;
  * the build if a field is renamed in a schema and not here.
  */
 export const STEP_FIELDS = [
-  ["name", "university", "degree", "graduationYear"],
+  ["name", "university", "degree", "fieldOfStudy", "graduationYear"],
   ["linkedinUrl", "githubUrl", "portfolioUrl"],
-  ["targetRoles", "skills", "preferredLocations", "preferredWorkMode"],
+  ["targetRoles", "skills", "preferredLocations", "preferredWorkModes"],
 ] as const satisfies ReadonlyArray<ReadonlyArray<keyof OnboardingFormValues>>;

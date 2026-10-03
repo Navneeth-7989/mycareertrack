@@ -102,15 +102,18 @@ export function TagInput({
         <ul className="flex flex-wrap gap-1.5">
           {value.map((tag) => (
             <li key={tag.toLowerCase()}>
-              <Badge variant="secondary" className="gap-0.5 pr-1">
+              <Badge variant="secondary" className="gap-1 pr-1">
                 {tag}
                 <button
                   type="button"
                   onClick={() => onChange(value.filter((item) => item !== tag))}
                   aria-label={`Remove ${tag}`}
-                  className="hover:bg-foreground/10 rounded-full p-0.5"
+                  className="text-muted-foreground hover:bg-foreground/10 hover:text-foreground focus-visible:ring-ring/40 rounded-full p-0.5 transition-colors outline-none focus-visible:ring-2"
                 >
-                  <X aria-hidden="true" />
+                  {/* Sized here, not by the badge: the badge's `[&>svg]` rule
+                      only reaches direct children, and this one is nested in a
+                      button — so without this it renders at lucide's 24px. */}
+                  <X className="size-3" aria-hidden="true" />
                 </button>
               </Badge>
             </li>

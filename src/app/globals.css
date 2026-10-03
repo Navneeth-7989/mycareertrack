@@ -4,6 +4,22 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/*
+ * The CareerTrack theme — cool slate neutrals, a single professional blue
+ * accent, 8px control radii, soft slate-tinted elevation.
+ *
+ * The accent is `oklch(0.516 0.163 254.9)` — the same azure as LinkedIn's
+ * #0A66C2, which is the blue this product's users see all day on LinkedIn,
+ * Naukri and every job board in between. It replaced an indigo that read as
+ * consumer-app purple next to them. It clears 5:1 against white, so white text
+ * on a filled button passes AA.
+ *
+ * Every value below is deliberate. The stock shadcn palette is pure greyscale
+ * with a near-black primary, which reads as unfinished no matter how well the
+ * layout is built, so the hue lives here rather than being sprinkled over
+ * components. One accent, used sparingly: primary is for the single most
+ * important action on a screen and for active navigation, nothing else.
+ */
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -27,6 +43,11 @@
   --color-input: var(--input);
   --color-border: var(--border);
   --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
   --color-accent-foreground: var(--accent-foreground);
   --color-accent: var(--accent);
   --color-muted-foreground: var(--muted-foreground);
@@ -39,6 +60,8 @@
   --color-popover: var(--popover);
   --color-card-foreground: var(--card-foreground);
   --color-card: var(--card);
+
+  /* 8px is the control radius (`rounded-lg`); cards sit one step up at ~11px. */
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
   --radius-lg: var(--radius);
@@ -46,85 +69,207 @@
   --radius-2xl: calc(var(--radius) * 1.8);
   --radius-3xl: calc(var(--radius) * 2.2);
   --radius-4xl: calc(var(--radius) * 2.6);
+
+  /*
+   * Tailwind's default shadows are neutral black at fairly high alpha, which
+   * muddies a slate canvas. These are tinted with the foreground slate and
+   * kept shallow — elevation should be felt rather than seen, and the whole
+   * scale stays under 0.16 alpha so nothing looks like a drop shadow.
+   */
+  --shadow-2xs: 0 1px 2px 0 oklch(0.208 0.042 265.755 / 0.04);
+  --shadow-xs:
+    0 1px 2px 0 oklch(0.208 0.042 265.755 / 0.05), 0 1px 1px -1px oklch(0.208 0.042 265.755 / 0.04);
+  --shadow-sm:
+    0 1px 3px 0 oklch(0.208 0.042 265.755 / 0.06), 0 1px 2px -1px oklch(0.208 0.042 265.755 / 0.05);
+  --shadow-md:
+    0 4px 10px -2px oklch(0.208 0.042 265.755 / 0.08),
+    0 2px 4px -2px oklch(0.208 0.042 265.755 / 0.05);
+  --shadow-lg:
+    0 12px 28px -8px oklch(0.208 0.042 265.755 / 0.12),
+    0 4px 10px -4px oklch(0.208 0.042 265.755 / 0.06);
+  --shadow-xl: 0 24px 48px -12px oklch(0.208 0.042 265.755 / 0.16);
 }
 
 :root {
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
+  --radius: 0.5rem;
+
+  /* Slate canvas, white cards — the surface split the direction asks for. */
+  --background: oklch(0.984 0.003 247.858); /* slate-50 */
+  --foreground: oklch(0.208 0.042 265.755); /* slate-900 */
   --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
+  --card-foreground: oklch(0.208 0.042 265.755);
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --radius: 0.625rem;
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+  --popover-foreground: oklch(0.208 0.042 265.755);
+
+  --primary: oklch(0.516 0.163 254.9); /* #0A66C2 — the job-board blue */
+  --primary-foreground: oklch(1 0 0);
+
+  --secondary: oklch(0.968 0.007 247.896); /* slate-100 */
+  --secondary-foreground: oklch(0.279 0.041 260.031); /* slate-800 */
+
+  --muted: oklch(0.968 0.007 247.896); /* slate-100 */
+  --muted-foreground: oklch(0.554 0.046 257.417); /* slate-500 */
+
+  /* Reserved for highlighted rows and hovered menu items, hence the blue tint. */
+  --accent: oklch(0.97 0.014 254.6); /* blue-50 */
+  --accent-foreground: oklch(0.38 0.12 254.9); /* a deep azure, for text on the tint */
+
+  --destructive: oklch(0.577 0.245 27.325); /* red-600 */
+  --destructive-foreground: oklch(1 0 0);
+  --success: oklch(0.596 0.145 163.225); /* emerald-600 */
+  --success-foreground: oklch(1 0 0);
+  --warning: oklch(0.666 0.179 58.318); /* amber-600 */
+  --warning-foreground: oklch(1 0 0);
+
+  --border: oklch(0.929 0.013 255.508); /* slate-200 */
+  --input: oklch(
+    0.869 0.022 252.894
+  ); /* slate-300 — control borders need more weight than dividers */
+  --ring: oklch(0.62 0.17 254.9); /* a visible focus glow, not a grey one */
+
+  /*
+   * Chart 1 is the accent so the primary metric matches the primary action.
+   * The rest step away in hue rather than only in lightness, because the
+   * greyscale ramp shadcn ships is unreadable the moment there are five series.
+   */
+  --chart-1: oklch(0.546 0.17 254.9); /* the accent, so the headline metric matches the CTA */
+  --chart-2: oklch(0.6 0.118 184.704); /* teal-600 */
+  --chart-3: oklch(0.666 0.179 58.318); /* amber-600 */
+  --chart-4: oklch(0.606 0.25 292.717); /* violet-500 */
+  --chart-5: oklch(0.645 0.246 16.439); /* rose-500 */
+
+  /* The shell block consumes these; defined now so it inherits the theme. */
+  --sidebar: oklch(1 0 0);
+  --sidebar-foreground: oklch(0.372 0.044 257.287); /* slate-700 */
+  --sidebar-primary: oklch(0.516 0.163 254.9);
+  --sidebar-primary-foreground: oklch(1 0 0);
+  --sidebar-accent: oklch(0.97 0.014 254.6);
+  --sidebar-accent-foreground: oklch(0.38 0.12 254.9);
+  --sidebar-border: oklch(0.929 0.013 255.508);
+  --sidebar-ring: oklch(0.62 0.17 254.9);
 }
 
+/*
+ * No theme toggle ships yet, so nothing sets `.dark` — this set exists so the
+ * one the shell block adds inherits a coherent palette instead of the stock
+ * greyscale. Primary lifts a step because the light-surface azure loses too
+ * much separation from a slate-950 canvas.
+ */
 .dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
+  --background: oklch(0.129 0.042 264.695); /* slate-950 */
+  --foreground: oklch(0.968 0.007 247.896); /* slate-100 */
+  --card: oklch(0.208 0.042 265.755); /* slate-900 */
+  --card-foreground: oklch(0.968 0.007 247.896);
+  --popover: oklch(0.208 0.042 265.755);
+  --popover-foreground: oklch(0.968 0.007 247.896);
+
+  --primary: oklch(0.565 0.172 254.9);
+  --primary-foreground: oklch(1 0 0);
+
+  --secondary: oklch(0.279 0.041 260.031); /* slate-800 */
+  --secondary-foreground: oklch(0.968 0.007 247.896);
+
+  --muted: oklch(0.279 0.041 260.031);
+  --muted-foreground: oklch(0.704 0.04 256.788); /* slate-400 */
+
+  --accent: oklch(0.27 0.075 256); /* a deep navy tint */
+  --accent-foreground: oklch(0.87 0.06 254.9);
+
   --destructive: oklch(0.704 0.191 22.216);
+  --destructive-foreground: oklch(0.129 0.042 264.695);
+  --success: oklch(0.696 0.17 162.48);
+  --success-foreground: oklch(0.129 0.042 264.695);
+  --warning: oklch(0.769 0.188 70.08);
+  --warning-foreground: oklch(0.129 0.042 264.695);
+
   --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --input: oklch(1 0 0 / 16%);
+  --ring: oklch(0.68 0.16 254.9);
+
+  --chart-1: oklch(0.68 0.16 254.9);
+  --chart-2: oklch(0.704 0.14 182.503);
+  --chart-3: oklch(0.769 0.188 70.08);
+  --chart-4: oklch(0.702 0.183 293.541);
+  --chart-5: oklch(0.712 0.194 13.428);
+
+  --sidebar: oklch(0.208 0.042 265.755);
+  --sidebar-foreground: oklch(0.869 0.022 252.894);
+  --sidebar-primary: oklch(0.565 0.172 254.9);
+  --sidebar-primary-foreground: oklch(1 0 0);
+  --sidebar-accent: oklch(0.27 0.075 256);
+  --sidebar-accent-foreground: oklch(0.87 0.06 254.9);
   --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+  --sidebar-ring: oklch(0.68 0.16 254.9);
 }
 
 @layer base {
   * {
     @apply border-border outline-ring/50;
   }
+
   body {
     @apply bg-background text-foreground;
   }
+
   html {
     @apply font-sans;
   }
+
+  /*
+   * Headings are tracked in rather than scaled up: at display sizes Geist's
+   * default tracking reads loose, and tightening it is what separates a heading
+   * from large body text without reaching for more weight.
+   */
+  h1,
+  h2,
+  h3,
+  h4 {
+    @apply font-heading tracking-tight;
+  }
+
+  h1 {
+    @apply tracking-[-0.02em];
+  }
+
+  ::selection {
+    @apply bg-primary/15;
+  }
+
+  /* Numbers in metrics must not jitter as they change. */
+  th,
+  td {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/*
+ * A barely-there dotted field for full-bleed marketing and auth surfaces. It is
+ * one step above a flat slate fill and deliberately stops there — the grid is
+ * structure, not ornament, so it never appears behind content.
+ */
+@utility surface-dotted {
+  background-image: radial-gradient(circle at 1px 1px, var(--color-slate-200) 1px, transparent 0);
+  background-size: 28px 28px;
+}
+
+/*
+ * The same idea for dark sections, where slate dots would vanish: a faint white
+ * grid. Both are declared as utilities rather than arbitrary values so the
+ * background-size travels with the background-image and cannot be dropped by a
+ * syntax the compiler does not recognise.
+ */
+@utility surface-grid-dark {
+  background-image:
+    linear-gradient(to right, rgb(255 255 255 / 0.05) 1px, transparent 1px),
+    linear-gradient(to bottom, rgb(255 255 255 / 0.05) 1px, transparent 1px);
+  background-size: 56px 56px;
+}
+
+/*
+ * Section eyebrows: the small uppercase label above a heading. Centralised
+ * because the tracking and size have to be identical everywhere for the type
+ * scale to hold together.
+ */
+@utility eyebrow {
+  @apply text-primary text-xs font-semibold tracking-[0.12em] uppercase;
 }

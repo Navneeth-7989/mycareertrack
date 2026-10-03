@@ -25,6 +25,7 @@ export async function completeOnboarding(
     timezone,
     university,
     degree,
+    fieldOfStudy,
     graduationYear,
     linkedinUrl,
     githubUrl,
@@ -32,12 +33,13 @@ export async function completeOnboarding(
     targetRoles,
     skills,
     preferredLocations,
-    preferredWorkMode,
+    preferredWorkModes,
   } = payload;
 
   const profileFields = {
     university,
     degree,
+    fieldOfStudy,
     graduationYear,
     linkedinUrl,
     githubUrl,
@@ -45,7 +47,7 @@ export async function completeOnboarding(
     targetRoles,
     skills,
     preferredLocations,
-    preferredWorkMode,
+    preferredWorkModes,
   };
 
   await prisma.$transaction([

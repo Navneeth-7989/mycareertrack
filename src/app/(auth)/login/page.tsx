@@ -28,29 +28,32 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
   const providerError = typeof params.error === "string" ? params.error : undefined;
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-lg">Welcome back</CardTitle>
-        <CardDescription>Sign in to pick up where you left off.</CardDescription>
-      </CardHeader>
+    <>
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-xl">Welcome back</CardTitle>
+          <CardDescription>Sign in to pick up where you left off.</CardDescription>
+        </CardHeader>
 
-      <CardContent className="flex flex-col gap-5">
-        <OAuthButtons callbackUrl={callbackUrl} />
+        <CardContent className="flex flex-col gap-6">
+          <OAuthButtons callbackUrl={callbackUrl} />
 
-        <FieldSeparator>or</FieldSeparator>
+          <FieldSeparator>or</FieldSeparator>
 
-        <LoginForm callbackUrl={callbackUrl} providerError={providerError} />
+          <LoginForm callbackUrl={callbackUrl} providerError={providerError} />
+        </CardContent>
+      </Card>
 
-        <p className="text-muted-foreground text-center text-sm">
-          New here?{" "}
-          <Link
-            href="/register"
-            className="text-foreground font-medium underline-offset-4 hover:underline"
-          >
-            Create an account
-          </Link>
-        </p>
-      </CardContent>
-    </Card>
+      {/* Outside the card: the card is for the one action, this is the way out. */}
+      <p className="text-muted-foreground mt-6 text-center text-sm">
+        New here?{" "}
+        <Link
+          href="/register"
+          className="text-primary font-medium underline-offset-4 hover:underline"
+        >
+          Create an account
+        </Link>
+      </p>
+    </>
   );
 }

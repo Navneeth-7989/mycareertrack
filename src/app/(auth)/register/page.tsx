@@ -28,29 +28,28 @@ export default async function RegisterPage({
   const callbackUrl = safeRedirectPath(params.callbackUrl);
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-lg">Create your account</CardTitle>
-        <CardDescription>Start tracking applications in a couple of minutes.</CardDescription>
-      </CardHeader>
+    <>
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-xl">Create your account</CardTitle>
+          <CardDescription>Start tracking applications in a couple of minutes.</CardDescription>
+        </CardHeader>
 
-      <CardContent className="flex flex-col gap-5">
-        <OAuthButtons callbackUrl={callbackUrl} />
+        <CardContent className="flex flex-col gap-6">
+          <OAuthButtons callbackUrl={callbackUrl} />
 
-        <FieldSeparator>or</FieldSeparator>
+          <FieldSeparator>or</FieldSeparator>
 
-        <RegisterForm callbackUrl={callbackUrl} />
+          <RegisterForm callbackUrl={callbackUrl} />
+        </CardContent>
+      </Card>
 
-        <p className="text-muted-foreground text-center text-sm">
-          Already have an account?{" "}
-          <Link
-            href="/login"
-            className="text-foreground font-medium underline-offset-4 hover:underline"
-          >
-            Sign in
-          </Link>
-        </p>
-      </CardContent>
-    </Card>
+      <p className="text-muted-foreground mt-6 text-center text-sm">
+        Already have an account?{" "}
+        <Link href="/login" className="text-primary font-medium underline-offset-4 hover:underline">
+          Sign in
+        </Link>
+      </p>
+    </>
   );
 }

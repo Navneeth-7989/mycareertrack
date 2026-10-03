@@ -216,8 +216,17 @@ model Profile {
   id     String @id @default(cuid())
   userId String @unique
 
-  university     String?
-  degree         String?
+  university String?
+  degree     String?
+
+  // The specialisation behind the degree: "B.Tech" is the degree, "Computer
+  // Science" is this. Separate columns because the wizard offers a curated
+  // degree list, which collapses "B.Tech Computer Science" into its first half.
+  //
+  // Nullable and never required — it is meaningless for an MBBS or an LL.B, so
+  // DESIGN.md §9's required set deliberately leaves it out.
+  fieldOfStudy String?
+
   graduationYear Int?
 
   // Free text, private to one user, never queried relationally — Postgres
@@ -225,7 +234,15 @@ model Profile {
   targetRoles        String[]
   skills             String[]
   preferredLocations String[]
-  preferredWorkMode  WorkMode?
+
+  // A list, not one choice: "remote or hybrid, but not on-site" is the normal
+  // answer, and the single-value column this replaced forced that person to
+  // either pick one or say "no preference" and mean neither.
+  //
+  // An empty array *is* "no preference" — there is no null to distinguish,
+  // which removes the "null vs empty" question the other list columns already
+  // avoid.
+  preferredWorkModes WorkMode[]
 
   linkedinUrl  String?
   githubUrl    String?
