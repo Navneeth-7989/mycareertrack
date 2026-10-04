@@ -214,8 +214,13 @@ export function OnboardingWizard({
     //
     // `replace`, not `assign`: a completed wizard has no business in the back
     // history, and going back to it would only bounce off its own guard.
+    //
+    // `?welcome=1` is the handoff to the dashboard's toast. A hard navigation
+    // discards every bit of client state, so the parameter is the only way the
+    // next page can know this was a first arrival rather than a normal visit.
+    // The dashboard strips it as soon as it has fired.
     setIsLeaving(true);
-    window.location.replace("/dashboard");
+    window.location.replace("/dashboard?welcome=1");
   });
 
   function handleKeyDown(event: KeyboardEvent<HTMLFormElement>) {

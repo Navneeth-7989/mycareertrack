@@ -12,6 +12,7 @@ import {
   MenuSeparator,
   MenuTrigger,
 } from "@/components/ui/menu";
+import { ACCOUNT_ITEMS } from "@/lib/constants/navigation";
 import { signOutUser } from "@/server/actions/auth";
 
 /**
@@ -77,6 +78,22 @@ export function UserMenu({
             Dashboard
           </MenuLinkItem>
         ) : null}
+
+        {/*
+         * Profile and settings live here rather than in the sidebar: they are
+         * about the account, not about the work, and mixing them into the
+         * product's navigation is what turns a focused eight-item sidebar into
+         * a list nobody scans. They come from the same navigation module the
+         * sidebar reads, so the hrefs cannot drift apart.
+         */}
+        {ACCOUNT_ITEMS.map((item) => (
+          <MenuLinkItem key={item.href} render={<Link href={item.href} />}>
+            <item.icon aria-hidden="true" />
+            {item.label}
+          </MenuLinkItem>
+        ))}
+
+        <MenuSeparator />
 
         {/*
          * A form, not an onClick: sign-out is a Server Action, and this keeps
