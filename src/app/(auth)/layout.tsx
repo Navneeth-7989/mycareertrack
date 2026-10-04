@@ -33,7 +33,10 @@ export default async function AuthLayout({ children }: { children: ReactNode }) 
 
   return (
     <main className="flex flex-1">
-      <div className="flex flex-1 flex-col px-6 py-8 sm:px-10 lg:px-14">
+      {/* The extra air is keyed to viewport *height*, not width. A 1366x768
+          laptop matches every width breakpoint up to xl, so `sm:py-7` would
+          have added the padding back on exactly the screen this is tight on. */}
+      <div className="flex flex-1 flex-col px-6 py-4 sm:px-10 lg:px-14 [@media(min-height:800px)]:py-7">
         <Link
           href="/"
           aria-label="CareerTrack home"
@@ -42,8 +45,24 @@ export default async function AuthLayout({ children }: { children: ReactNode }) 
           <Logo size="sm" />
         </Link>
 
-        <div className="flex flex-1 items-center justify-center py-12">
-          <div className="w-full max-w-sm">{children}</div>
+        {/*
+         * `my-auto` on the child rather than `items-center` on the parent. The
+         * two look identical while the form fits, but they fail differently
+         * when it doesn't: a centred flex item overflows in both directions and
+         * the part above the container cannot be scrolled to, so on a short
+         * laptop the register card lost its own heading off the top of the
+         * window. `my-auto` collapses to the top instead of clipping.
+         *
+         * The padding is also deliberately small, and only grows on tall
+         * viewports: `my-auto` is what centres the card, so this padding does
+         * nothing when there is room and costs real height when there isn't.
+         * The register card is the constraint — with OAuth, three fields and
+         * the "already have an account?" line below it, 96px of fixed vertical
+         * padding was enough on its own to push that line off a 1366x768
+         * screen.
+         */}
+        <div className="flex flex-1 justify-center py-3 [@media(min-height:800px)]:py-8">
+          <div className="my-auto w-full max-w-sm">{children}</div>
         </div>
       </div>
 

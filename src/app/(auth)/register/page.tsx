@@ -29,13 +29,16 @@ export default async function RegisterPage({
 
   return (
     <>
-      <Card>
+      {/* 20px rather than the default 24 — the auth cards are the one place in
+          the app where the card has to fit a laptop viewport whole, footer line
+          included, and 20px is still a long way from cramped. */}
+      <Card className="[--card-spacing:--spacing(5)]">
         <CardHeader>
           <CardTitle className="text-xl">Create your account</CardTitle>
           <CardDescription>Start tracking applications in a couple of minutes.</CardDescription>
         </CardHeader>
 
-        <CardContent className="flex flex-col gap-6">
+        <CardContent className="flex flex-col gap-4">
           <OAuthButtons callbackUrl={callbackUrl} />
 
           <FieldSeparator>or</FieldSeparator>
@@ -44,7 +47,7 @@ export default async function RegisterPage({
         </CardContent>
       </Card>
 
-      <p className="text-muted-foreground mt-6 text-center text-sm">
+      <p className="text-muted-foreground mt-4 text-center text-sm">
         Already have an account?{" "}
         <Link href="/login" className="text-primary font-medium underline-offset-4 hover:underline">
           Sign in

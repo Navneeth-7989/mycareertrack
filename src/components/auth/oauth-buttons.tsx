@@ -40,19 +40,36 @@ function GitHubIcon() {
   );
 }
 
+/**
+ * Side by side rather than stacked, and labelled with the provider alone.
+ *
+ * Stacked, these two were 88px of the register card — enough on their own to
+ * push the "already have an account?" line below the fold of a 1366x768 laptop.
+ * One row is 40px and costs nothing: the icon already says which service it is,
+ * so "Continue with" was carrying no information twice over.
+ *
+ * The full phrase stays as the accessible name — "Google" on its own is a
+ * noun, not an action, and that is what a screen reader would read out.
+ */
 export function OAuthButtons({ callbackUrl }: { callbackUrl: string }) {
   return (
-    <div className="flex flex-col gap-2">
+    <div className="grid grid-cols-2 gap-2">
       {(
         [
-          { provider: "google", label: "Continue with Google", icon: <GoogleIcon /> },
-          { provider: "github", label: "Continue with GitHub", icon: <GitHubIcon /> },
+          { provider: "google", label: "Google", icon: <GoogleIcon /> },
+          { provider: "github", label: "GitHub", icon: <GitHubIcon /> },
         ] as const
       ).map(({ provider, label, icon }) => (
         <form key={provider} action={signInWithProvider}>
           <input type="hidden" name="provider" value={provider} />
           <input type="hidden" name="callbackUrl" value={callbackUrl} />
-          <Button type="submit" variant="outline" size="lg" className="w-full">
+          <Button
+            type="submit"
+            variant="outline"
+            size="lg"
+            className="w-full"
+            aria-label={`Continue with ${label}`}
+          >
             {icon}
             {label}
           </Button>

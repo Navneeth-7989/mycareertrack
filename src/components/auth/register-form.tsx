@@ -7,6 +7,7 @@ import { signIn } from "next-auth/react";
 import { useForm } from "react-hook-form";
 import type { z } from "zod";
 
+import { PasswordInput } from "@/components/form/password-input";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
@@ -85,7 +86,8 @@ export function RegisterForm({ callbackUrl }: { callbackUrl: string }) {
 
   return (
     <form onSubmit={onSubmit} noValidate>
-      <FieldGroup>
+      {/* gap-4, not the default gap-5: see /register for the height budget. */}
+      <FieldGroup className="gap-4">
         {formError && (
           <Alert variant="destructive">
             <AlertDescription>{formError}</AlertDescription>
@@ -107,9 +109,8 @@ export function RegisterForm({ callbackUrl }: { callbackUrl: string }) {
 
         <Field data-invalid={Boolean(errors.password)}>
           <FieldLabel htmlFor="password">Password</FieldLabel>
-          <Input
+          <PasswordInput
             id="password"
-            type="password"
             autoComplete="new-password"
             aria-invalid={Boolean(errors.password)}
             {...register("password")}
@@ -123,9 +124,8 @@ export function RegisterForm({ callbackUrl }: { callbackUrl: string }) {
 
         <Field data-invalid={Boolean(errors.confirmPassword)}>
           <FieldLabel htmlFor="confirmPassword">Confirm password</FieldLabel>
-          <Input
+          <PasswordInput
             id="confirmPassword"
-            type="password"
             autoComplete="new-password"
             aria-invalid={Boolean(errors.confirmPassword)}
             {...register("confirmPassword")}

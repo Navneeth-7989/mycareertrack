@@ -29,13 +29,14 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
 
   return (
     <>
-      <Card>
+      {/* See /register for why the card spacing is tightened on the auth pages. */}
+      <Card className="[--card-spacing:--spacing(5)]">
         <CardHeader>
           <CardTitle className="text-xl">Welcome back</CardTitle>
           <CardDescription>Sign in to pick up where you left off.</CardDescription>
         </CardHeader>
 
-        <CardContent className="flex flex-col gap-6">
+        <CardContent className="flex flex-col gap-4">
           <OAuthButtons callbackUrl={callbackUrl} />
 
           <FieldSeparator>or</FieldSeparator>
@@ -45,7 +46,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
       </Card>
 
       {/* Outside the card: the card is for the one action, this is the way out. */}
-      <p className="text-muted-foreground mt-6 text-center text-sm">
+      <p className="text-muted-foreground mt-4 text-center text-sm">
         New here?{" "}
         <Link
           href="/register"
