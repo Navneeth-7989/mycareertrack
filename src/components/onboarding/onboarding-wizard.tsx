@@ -219,21 +219,43 @@ export function OnboardingWizard({
   });
 
   function handleKeyDown(event: KeyboardEvent<HTMLFormElement>) {
-    // Enter advances instead of submitting a form the user hasn't finished.
     // defaultPrevented means a child already handled it — the tag inputs use
     // Enter to commit a chip.
-    if (event.key !== "Enter" || event.defaultPrevented || step === LAST_STEP) {
+    if (event.key !== "Enter" || event.defaultPrevented) {
+      return;
+    }
+
+    const target = event.target as HTMLElement | null;
+
+    // A focused button owns Enter itself. Without this, Enter on "Back" was
+    // preventDefault-ed here and sent the user *forward* — the opposite of the
+    // control they had their finger on.
+    if (target?.closest("button")) {
       return;
     }
 
     // An open combobox owns Enter: it is how a university is chosen, and how
     // "Use what you typed" is accepted. Advancing the step as well would skip
     // past the selection the user just made.
-    if ((event.target as HTMLElement | null)?.getAttribute("aria-expanded") === "true") {
+    if (target?.getAttribute("aria-expanded") === "true") {
       return;
     }
 
+    // Enter is handled here on every step, including the last, rather than
+    // being left to the browser's implicit submission. Implicit submission is
+    // what made a held-down Enter dangerous: the first keypress advanced to the
+    // last step, and the repeat — now on a step this function used to bail out
+    // of — submitted the wizard before the user had seen it.
     event.preventDefault();
+
+    if (step === LAST_STEP) {
+      if (!isSubmitting && !isLeaving) {
+        void onSubmit();
+      }
+
+      return;
+    }
+
     void goNext();
   }
 
@@ -509,8 +531,31 @@ export function OnboardingWizard({
               </span>
             )}
 
+            {/* Both branches are type="button", and the last step submits from
+                its own onClick rather than through the browser.
+
+                "Finish setup" was a type="submit" button, which skipped the
+                preferences step entirely: React reconciles these two branches
+                into the *same* <button> node, so the click on "Continue" that
+                moved the user onto the last step also rewrote that node's type
+                to "submit" — and a button's activation behaviour is run after
+                the event has finished dispatching, against whatever the type
+                attribute says by then. One click, two buttons: it advanced the
+                step and then submitted the form it had just turned into a
+                submit button, so the preferences appeared for as long as the
+                POST took and the user landed on the dashboard never having
+                filled them in.
+
+                Keeping the type fixed removes the activation behaviour from
+                the equation rather than trying to out-race it. Enter is handled
+                in `handleKeyDown`, so no submission path is lost. */}
             {step === LAST_STEP ? (
-              <Button type="submit" size="lg" disabled={isSubmitting || isLeaving}>
+              <Button
+                type="button"
+                size="lg"
+                onClick={() => void onSubmit()}
+                disabled={isSubmitting || isLeaving}
+              >
                 {isLeaving ? "Opening your dashboard…" : isSubmitting ? "Saving…" : "Finish setup"}
               </Button>
             ) : (
