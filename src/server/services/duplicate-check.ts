@@ -8,16 +8,17 @@ import { prisma } from "../db";
 /**
  * The duplicate advisory for application create (DESIGN.md §6).
  *
- * **It never blocks.** Three Google roles is normal, and so is re-applying to
- * the same role next cycle — §8's edge-case table calls a duplicate "a layered
- * warning, never a block". The layers, as decided:
+ * This function only *detects*. What happens next is the caller's decision, and
+ * `mutations/applications.ts` makes it by level:
  *
- * - Same company → `level: "info"`. Useful context, not a problem.
- * - Same company *and* a similar job title → `level: "warning"`. This is the
- *   one that is usually a mistake: the same posting entered twice.
+ * - Same company → `level: "info"`. Returned beside a 201 and shown as a toast.
+ *   Three Google roles is normal; this is context, not a problem.
+ * - Same company *and* a similar job title → `level: "warning"`. The create
+ *   stops and asks for confirmation before writing anything, because this one
+ *   is usually the same posting entered twice.
  *
- * Both are advisory, returned alongside a `201`, and the UI shows them after the
- * fact rather than standing between the user and saving their work.
+ * Neither is a block in §8's sense — a duplicate can never be *refused*. The
+ * warning level can only ask first, and a confirmed duplicate saves normally.
  */
 
 type ApplicationClient = Pick<Prisma.TransactionClient, "application">;

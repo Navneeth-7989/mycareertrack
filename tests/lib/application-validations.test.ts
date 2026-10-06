@@ -17,6 +17,7 @@ import {
 import {
   EMPTY_APPLICATION_FORM,
   applicationWarningsSchema,
+  createApplicationRequestSchema,
   createApplicationSchema,
 } from "@/lib/validations/application";
 
@@ -235,6 +236,56 @@ describe("the form-posts-raw-values contract", () => {
     const parsed = createApplicationSchema.parse(minimal);
 
     expect(Object.keys(parsed).sort()).toEqual(Object.keys(EMPTY_APPLICATION_FORM).sort());
+  });
+});
+
+describe("createApplicationRequestSchema", () => {
+  it("defaults the acknowledgement to false", () => {
+    // The default matters more than it looks: a client that has never heard of
+    // the flag must get the confirmation, not bypass it.
+    expect(createApplicationRequestSchema.parse(minimal).acknowledgeDuplicate).toBe(false);
+  });
+
+  it("accepts an explicit acknowledgement", () => {
+    const result = createApplicationRequestSchema.parse({
+      ...minimal,
+      acknowledgeDuplicate: true,
+    });
+
+    expect(result.acknowledgeDuplicate).toBe(true);
+  });
+
+  it("will not take a truthy string for the flag", () => {
+    // Nothing types this field, so there is no input whose string value it has
+    // to accept — and "false" being truthy is how a coerced boolean silently
+    // acknowledges every duplicate.
+    expect(
+      createApplicationRequestSchema.safeParse({ ...minimal, acknowledgeDuplicate: "false" })
+        .success,
+    ).toBe(false);
+  });
+
+  it("applies the same field and cross-field rules as the form", () => {
+    expect(createApplicationRequestSchema.safeParse({ ...minimal, companyName: "" }).success).toBe(
+      false,
+    );
+
+    const salaries = createApplicationRequestSchema.safeParse({
+      ...minimal,
+      salaryMin: "900000",
+      salaryMax: "600000",
+    });
+
+    expect(salaries.success).toBe(false);
+    expect(salaries.error?.issues[0]?.path).toEqual(["salaryMax"]);
+  });
+
+  it("keeps the flag out of the form's own schema", () => {
+    // EMPTY_APPLICATION_FORM is `Required<ApplicationFormValues>`, so the flag
+    // leaking into the form schema would force a meaningless default onto the
+    // form — and make the acknowledgement look like something a user types.
+    expect("acknowledgeDuplicate" in EMPTY_APPLICATION_FORM).toBe(false);
+    expect("acknowledgeDuplicate" in createApplicationSchema.parse(minimal)).toBe(false);
   });
 });
 

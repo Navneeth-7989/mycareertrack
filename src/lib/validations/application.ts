@@ -220,15 +220,52 @@ export function applicationCrossFieldRules(
   }
 }
 
-export const createApplicationSchema = z
-  .object(applicationFields)
+const applicationObject = z.object(applicationFields);
+
+/** What the form validates: the fields a user can fill in, and nothing else. */
+export const createApplicationSchema = applicationObject.superRefine(applicationCrossFieldRules);
+
+/**
+ * What `POST /api/applications` accepts: the form's fields plus the
+ * acknowledgement.
+ *
+ * Two schemas rather than one optional field in a single schema, because the
+ * flag is not a form value. It has no input, it is appended at submit time
+ * — the same arrangement as `timezone` in the onboarding wizard — and keeping
+ * it out of `createApplicationSchema` is what lets `EMPTY_APPLICATION_FORM`
+ * stay exactly "every field the form holds", enforced by the compiler.
+ *
+ * A real boolean on the wire, not a string: nothing types this, so there is no
+ * `<input>` whose value it has to match.
+ */
+export const createApplicationRequestSchema = applicationObject
+  .extend({
+    /**
+     * "I know this looks like a duplicate — save it anyway."
+     *
+     * Defaults to false, so a client that has never heard of the flag gets the
+     * confirmation rather than silently bypassing it.
+     */
+    acknowledgeDuplicate: z.boolean().optional().default(false),
+  })
   .superRefine(applicationCrossFieldRules);
 
 /** What the form holds: every field a string, as inputs produce. */
 export type ApplicationFormValues = z.input<typeof createApplicationSchema>;
 
-/** What the mutation receives: numbers, Dates, and nulls for blank optionals. */
-export type CreateApplicationPayload = z.output<typeof createApplicationSchema>;
+/**
+ * What the form's resolver produces — no acknowledgement flag, because the
+ * form has no such field.
+ *
+ * Distinct from `CreateApplicationPayload` on purpose. React Hook Form's third
+ * generic is the resolver's output, so the two must agree exactly: using the
+ * request payload there claims the resolver returns a field the form schema has
+ * never heard of.
+ */
+export type ApplicationFormPayload = z.output<typeof createApplicationSchema>;
+
+/** What the mutation receives: numbers, Dates, nulls for blank optionals, and the flag. */
+export type CreateApplicationPayload = z.output<typeof createApplicationRequestSchema>;
 
 /**
  * The form's starting state. Exported so the create page and the edit page in a

@@ -1,5 +1,6 @@
 import { EventType } from "@prisma/client";
 
+import { ConfirmationRequiredError } from "@/lib/api/errors";
 import {
   APPLICATION_STATUS_LABELS,
   isResponseStatus,
@@ -29,7 +30,11 @@ export type CreatedApplication = {
   companyId: string;
   companyName: string;
   status: CreateApplicationPayload["status"];
-  /** Advisory, never a block (§6). Empty when this is the first of its kind. */
+  /**
+   * What was noticed but not acted on. Empty when this is the first of its
+   * kind. A warning-level duplicate only appears here when the caller
+   * acknowledged it — otherwise this never returned at all.
+   */
   warnings: ApplicationWarning[];
   /** Non-null when the recruiter fields produced or matched a contact. */
   contact: LinkedContact | null;
@@ -72,6 +77,26 @@ export async function createApplication(
       { companyId: company.id, companyName: company.name, jobTitle: payload.jobTitle },
       tx,
     );
+
+    /*
+     * A near-identical application stops here and asks, unless the user has
+     * already said yes. Throwing rolls the transaction back, so nothing is
+     * written — including the `Company` row this may just have created, which
+     * is why the question is asked here rather than before the transaction
+     * opens. An abandoned dialog leaves the database exactly as it was.
+     *
+     * Only the warning level gates. The info level — another role at the same
+     * company — stays a post-save toast: applying to four roles at one employer
+     * is normal behaviour (§8), and a dialog people learn to click through is a
+     * dialog nobody reads.
+     */
+    if (warning?.level === "warning" && !payload.acknowledgeDuplicate) {
+      throw new ConfirmationRequiredError({
+        reason: warning.code,
+        message: warning.message,
+        relatedIds: warning.applicationIds,
+      });
+    }
 
     const application = await tx.application.create({
       data: {

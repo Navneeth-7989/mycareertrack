@@ -13,28 +13,75 @@ export type ErrorCode =
   | "UNAUTHORIZED"
   | "NOT_FOUND"
   | "CONFLICT"
+  | "CONFIRMATION_REQUIRED"
   | "RATE_LIMITED"
   | "INTERNAL_ERROR";
 
 export type FieldErrors = Record<string, string>;
 
+/**
+ * What a `CONFIRMATION_REQUIRED` response carries: enough for the client to
+ * ask the question without knowing why it was asked.
+ *
+ * Kept generic — an id and a message, not an application-shaped payload — so
+ * this module stays the shared error vocabulary rather than growing a
+ * dependency on one feature's types.
+ */
+export type ConfirmationDetails = {
+  /** Identifies which confirmation this is, so the client picks the right copy. */
+  reason: string;
+  message: string;
+  /** Rows the question is about, if any. */
+  relatedIds?: string[];
+};
+
 export class AppError extends Error {
   readonly code: ErrorCode;
   readonly status: number;
   readonly fields?: FieldErrors;
+  readonly confirmation?: ConfirmationDetails;
 
-  constructor(code: ErrorCode, status: number, message: string, fields?: FieldErrors) {
+  constructor(
+    code: ErrorCode,
+    status: number,
+    message: string,
+    options: { fields?: FieldErrors; confirmation?: ConfirmationDetails } = {},
+  ) {
     super(message);
     this.name = new.target.name;
     this.code = code;
     this.status = status;
-    this.fields = fields;
+    this.fields = options.fields;
+    this.confirmation = options.confirmation;
   }
 }
 
 export class ValidationError extends AppError {
   constructor(fields: FieldErrors, message = "Invalid input") {
-    super("VALIDATION_ERROR", 400, message, fields);
+    super("VALIDATION_ERROR", 400, message, { fields });
+  }
+}
+
+/**
+ * "This is probably not what you meant — say so and I will do it."
+ *
+ * A 409, because the request conflicts with what is already stored. The
+ * distinction from `ConflictError` is whether the user can do anything about
+ * it: a duplicate email cannot be confirmed away, while a second application
+ * for the same role at the same company genuinely might be intended.
+ *
+ * **Nothing is written when this is thrown.** It is raised inside the
+ * transaction, before the write, so the rollback is what makes the retry safe —
+ * the alternative, saving and then asking, is the behaviour this replaced.
+ *
+ * Re-sending the same request with its acknowledgement flag set is how the
+ * client answers yes. There is deliberately no server-side token or pending
+ * state: the second request stands on its own, so an abandoned dialog leaves
+ * nothing behind to expire.
+ */
+export class ConfirmationRequiredError extends AppError {
+  constructor(confirmation: ConfirmationDetails) {
+    super("CONFIRMATION_REQUIRED", 409, confirmation.message, { confirmation });
   }
 }
 
@@ -88,7 +135,10 @@ function prismaErrorCode(error: unknown): string | null {
  */
 export function handleRouteError(error: unknown): Response {
   if (error instanceof AppError) {
-    return errorResponse(error.status, error.code, error.message, error.fields);
+    return errorResponse(error.status, error.code, error.message, {
+      fields: error.fields,
+      confirmation: error.confirmation,
+    });
   }
 
   const code = prismaErrorCode(error);
@@ -112,7 +162,17 @@ function errorResponse(
   status: number,
   code: ErrorCode,
   message: string,
-  fields?: FieldErrors,
+  extras: { fields?: FieldErrors; confirmation?: ConfirmationDetails } = {},
 ): Response {
-  return Response.json({ error: { code, message, ...(fields ? { fields } : {}) } }, { status });
+  return Response.json(
+    {
+      error: {
+        code,
+        message,
+        ...(extras.fields ? { fields: extras.fields } : {}),
+        ...(extras.confirmation ? { confirmation: extras.confirmation } : {}),
+      },
+    },
+    { status },
+  );
 }

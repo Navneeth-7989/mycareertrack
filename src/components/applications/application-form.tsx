@@ -9,6 +9,15 @@ import { Controller, useForm, useWatch } from "react-hook-form";
 import { CompanyCombobox } from "@/components/applications/company-combobox";
 import { EnumSelect, enumOptions } from "@/components/form/enum-select";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import {
+  AlertDialog,
+  AlertDialogClose,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
@@ -36,8 +45,8 @@ import {
   EMPTY_APPLICATION_FORM,
   applicationWarningsSchema,
   createApplicationSchema,
+  type ApplicationFormPayload,
   type ApplicationFormValues,
-  type CreateApplicationPayload,
 } from "@/lib/validations/application";
 
 /**
@@ -48,6 +57,12 @@ import {
  * common action in the product, so the two fields that identify it come first
  * and everything else can be ignored. The sections below them are ordered by
  * how likely they are to be filled in, not by how the database is shaped.
+ *
+ * A near-identical application does not save on the first click. The server
+ * answers 409 without writing anything, and the dialog at the bottom of this
+ * file asks before the same request is re-sent with `acknowledgeDuplicate`.
+ * Confirming is a second POST, not a resumed one — there is no pending state
+ * anywhere to go stale if the dialog is abandoned.
  *
  * It posts **raw form values** — `getValues()`, not the parsed payload
  * `handleSubmit` provides. The schema's input side is all strings and the API
@@ -90,6 +105,21 @@ export function ApplicationForm() {
    */
   const [isLeaving, setIsLeaving] = useState(false);
 
+  /**
+   * The duplicate question, or null when there is nothing to ask.
+   *
+   * The message is held rather than recomputed, because it is the server's
+   * sentence — it names the application already on file, which the client has
+   * no way to know.
+   */
+  const [duplicateQuestion, setDuplicateQuestion] = useState<string | null>(null);
+
+  /**
+   * The confirm path runs outside `handleSubmit`, so `isSubmitting` is false
+   * while it is in flight and the save button would look idle. This covers it.
+   */
+  const [isConfirming, setIsConfirming] = useState(false);
+
   // Three generics because the schema transforms: the form holds strings, the
   // submit callback would receive numbers and Dates. That callback ignores its
   // argument on purpose — see the note above about posting raw values.
@@ -100,7 +130,7 @@ export function ApplicationForm() {
     getValues,
     setError,
     formState: { errors, isSubmitting },
-  } = useForm<ApplicationFormValues, unknown, CreateApplicationPayload>({
+  } = useForm<ApplicationFormValues, unknown, ApplicationFormPayload>({
     resolver: zodResolver(createApplicationSchema),
     mode: "onTouched",
     defaultValues: EMPTY_APPLICATION_FORM,
@@ -115,17 +145,33 @@ export function ApplicationForm() {
   // disabled field is indistinguishable from a broken one.
   const showAppliedAt = isSubmittedStatus(status);
 
-  const onSubmit = handleSubmit(async () => {
+  /**
+   * Posts the form. `acknowledgeDuplicate` is false on the first attempt and
+   * true only when the user has answered the confirmation.
+   *
+   * Written as one function called from two places — the submit handler and the
+   * dialog's confirm button — so the retry is the *same* request with one field
+   * flipped, rather than a second code path that could drift from the first.
+   */
+  async function save(acknowledgeDuplicate: boolean) {
     setFormError(null);
 
     const response = await fetch("/api/applications", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(getValues()),
+      body: JSON.stringify({ ...getValues(), acknowledgeDuplicate }),
     });
 
     if (!response.ok) {
-      const { message, fields } = await readApiError(response);
+      const { code, message, fields, confirmation } = await readApiError(response);
+
+      // A near-identical application. Nothing was written — the server rolled
+      // the whole transaction back — so asking and re-posting is safe.
+      if (code === "CONFIRMATION_REQUIRED" && confirmation) {
+        setDuplicateQuestion(confirmation.message);
+        return;
+      }
+
       const named = Object.entries(fields).filter(([name]) => isFieldName(name));
 
       for (const [name, fieldMessage] of named) {
@@ -153,16 +199,24 @@ export function ApplicationForm() {
       description: `${values.jobTitle} at ${values.companyName}`,
     });
 
-    // The duplicate advisory, as a second toast rather than a dialog: the write
-    // already succeeded, so there is nothing to confirm or cancel (§6 — never a
-    // block). The toast stack is outside the page, so both survive the
-    // navigation that follows.
-    for (const warning of applicationWarningsSchema.parse(body)) {
-      toast.add({
-        type: "info",
-        title: warning.level === "warning" ? "Possible duplicate" : "Worth knowing",
-        description: warning.message,
-      });
+    /*
+     * The remaining advisories, as toasts. After an acknowledgement there is
+     * nothing left to say — the user was just asked about that exact duplicate
+     * and answered — so repeating it as a toast would be the app arguing with a
+     * decision it had already accepted.
+     *
+     * What does still surface is the info level: another role at the same
+     * company, which never reached a dialog. The toast stack lives outside the
+     * page, so these survive the navigation below.
+     */
+    if (!acknowledgeDuplicate) {
+      for (const warning of applicationWarningsSchema.parse(body)) {
+        toast.add({
+          type: "info",
+          title: "Worth knowing",
+          description: warning.message,
+        });
+      }
     }
 
     setIsLeaving(true);
@@ -172,9 +226,22 @@ export function ApplicationForm() {
     // while neither does — its counts move, which is visible proof the save
     // landed.
     router.push("/dashboard");
-  });
+  }
 
-  const busy = isSubmitting || isLeaving;
+  const onSubmit = handleSubmit(() => save(false));
+
+  async function confirmDuplicate() {
+    setDuplicateQuestion(null);
+    setIsConfirming(true);
+
+    try {
+      await save(true);
+    } finally {
+      setIsConfirming(false);
+    }
+  }
+
+  const busy = isSubmitting || isLeaving || isConfirming;
 
   return (
     <form onSubmit={onSubmit} noValidate className="flex flex-col gap-6">
@@ -612,6 +679,46 @@ export function ApplicationForm() {
           {busy ? "Saving…" : "Save application"}
         </Button>
       </div>
+
+      {/*
+       * Controlled by whether there is a question to ask, rather than by a
+       * trigger: the question comes from the server's answer to a submit, so
+       * there is no element the user clicked to open this.
+       */}
+      <AlertDialog
+        open={duplicateQuestion !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDuplicateQuestion(null);
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>You may have already applied to this</AlertDialogTitle>
+
+            <AlertDialogDescription>
+              {duplicateQuestion}. Nothing has been saved yet — save it anyway if this is a separate
+              application.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+
+          <AlertDialogFooter>
+            {/*
+             * Cancel returns to the form with every field still filled in, so
+             * the way out of a mistaken duplicate is to edit the title rather
+             * than to start again.
+             */}
+            <Button variant="outline" size="lg" render={<AlertDialogClose />}>
+              Back to the form
+            </Button>
+
+            <Button size="lg" onClick={confirmDuplicate}>
+              Save it anyway
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </form>
   );
 }

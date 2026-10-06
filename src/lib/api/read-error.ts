@@ -14,12 +14,34 @@ const errorEnvelopeSchema = z.object({
     code: z.string().optional(),
     message: z.string().optional(),
     fields: z.record(z.string(), z.string()).optional(),
+    /**
+     * Present on a `CONFIRMATION_REQUIRED` response: the question to put to the
+     * user, and the rows it is about. See `ConfirmationRequiredError`.
+     */
+    confirmation: z
+      .object({
+        reason: z.string(),
+        message: z.string(),
+        relatedIds: z.array(z.string()).optional(),
+      })
+      .optional(),
   }),
 });
 
 export type ApiError = {
+  /**
+   * The machine-readable code, when the body was ours. A caller that branches
+   * on this must treat `undefined` as "something else went wrong" — a proxy's
+   * HTML error page has no code, and neither does a 502.
+   */
+  code?: string;
   message: string;
   fields: Record<string, string>;
+  confirmation?: {
+    reason: string;
+    message: string;
+    relatedIds?: string[];
+  };
 };
 
 /**
@@ -37,8 +59,12 @@ export async function readApiError(
     return { message: fallbackMessage, fields: {} };
   }
 
+  const { code, message, fields, confirmation } = parsed.data.error;
+
   return {
-    message: parsed.data.error.message ?? fallbackMessage,
-    fields: parsed.data.error.fields ?? {},
+    ...(code ? { code } : {}),
+    message: message ?? fallbackMessage,
+    fields: fields ?? {},
+    ...(confirmation ? { confirmation } : {}),
   };
 }
