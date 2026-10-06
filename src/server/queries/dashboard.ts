@@ -12,9 +12,19 @@ import { prisma } from "../db";
  * that definition must exist in exactly one place.
  *
  * Every count is scoped by `userId` in the WHERE clause, per the rule in §4.
- * One `$transaction` rather than five awaits: a single round trip to Neon, and
- * all five numbers describe the same instant, so the tiles can never show a
- * response rate computed against a different snapshot than the total.
+ *
+ * These were one `$transaction` for a consistent snapshot. They are now
+ * `Promise.all`, for the reason in `db.ts`: Prisma's two-second default for
+ * acquiring a transaction is shorter than a suspended Neon database takes to
+ * wake, so a transaction on a read path turns a slow first visit into an error
+ * page. The applications list is where that was found; this had the identical
+ * exposure.
+ *
+ * Nothing is lost. The one number that could have been made incoherent by
+ * reading at different instants is `responseRate`, and it cannot be: every
+ * application with a `firstResponseAt` already had an `appliedAt` before it,
+ * so `responses` can grow between the two counts while `submitted` cannot
+ * shrink. The rate stays at or below 1 whatever order they resolve in.
  */
 
 /**
@@ -52,7 +62,7 @@ export async function getDashboardSummary(userId: string): Promise<DashboardSumm
     submittedApplications,
     responses,
     upcomingInterviews,
-  ] = await prisma.$transaction([
+  ] = await Promise.all([
     prisma.application.count({ where: { userId } }),
     prisma.application.count({ where: { userId, status: { notIn: [...INACTIVE_STATUSES] } } }),
     prisma.application.count({ where: { userId, appliedAt: { not: null } } }),

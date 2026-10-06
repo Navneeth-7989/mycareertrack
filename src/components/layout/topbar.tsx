@@ -3,7 +3,7 @@ import { Bell } from "lucide-react";
 
 import { UserMenu } from "@/components/account/user-menu";
 import { Logo } from "@/components/brand/logo";
-import { Button } from "@/components/ui/button";
+import { ButtonLink } from "@/components/ui/button";
 
 import { MobileNav } from "./mobile-nav";
 import { SectionLabel } from "./section-label";
@@ -38,14 +38,14 @@ export function Topbar({ name, email }: { name: string | null; email: string }) 
         <SectionLabel className="hidden lg:block" />
 
         <div className="ml-auto flex items-center gap-1.5 sm:gap-2">
-          <Button
+          <ButtonLink
             variant="ghost"
             size="icon-sm"
             aria-label="Notifications"
-            render={<Link href="/notifications" />}
+            href="/notifications"
           >
             <Bell aria-hidden="true" />
-          </Button>
+          </ButtonLink>
 
           {/* No Dashboard item — the sidebar two inches away already has one. */}
           <UserMenu name={name} email={email} showDashboardLink={false} />

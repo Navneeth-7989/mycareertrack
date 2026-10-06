@@ -8,7 +8,7 @@ import {
 } from "@/lib/constants/application";
 import type { ApplicationWarning, CreateApplicationPayload } from "@/lib/validations/application";
 
-import { prisma } from "../db";
+import { TRANSACTION_OPTIONS, prisma } from "../db";
 import { resolveCompanyByName } from "../services/company-resolver";
 import { resolveAndLinkRecruiter, type LinkedContact } from "../services/contact-resolver";
 import { findDuplicateWarning } from "../services/duplicate-check";
@@ -39,17 +39,6 @@ export type CreatedApplication = {
   /** Non-null when the recruiter fields produced or matched a contact. */
   contact: LinkedContact | null;
 };
-
-/**
- * Neon's free tier suspends an idle database, and the first query after that
- * waits for it to wake. Prisma's defaults — 2s to acquire a transaction, 5s to
- * run it — are generous for the five fast queries inside, and not generous
- * enough for a cold start: the symptom is a P2028 "unable to start a
- * transaction in the given time" on the first save after a quiet hour, which
- * looks like a bug in the form. The work itself still has to finish in 20
- * seconds or roll back.
- */
-const TRANSACTION_OPTIONS = { maxWait: 10_000, timeout: 20_000 } as const;
 
 export async function createApplication(
   userId: string,

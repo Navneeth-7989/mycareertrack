@@ -1,6 +1,6 @@
 import type { OnboardingPayload } from "@/lib/validations/profile";
 
-import { prisma } from "../db";
+import { TRANSACTION_OPTIONS, prisma } from "../db";
 
 /**
  * Writes the onboarding wizard's answers and opens the app up.
@@ -50,16 +50,24 @@ export async function completeOnboarding(
     preferredWorkModes,
   };
 
-  await prisma.$transaction([
-    prisma.user.update({
-      where: { id: userId },
-      data: { name, timezone, onboardingCompleted: true },
-    }),
+  // A real transaction: marking onboarding complete without writing the profile
+  // would leave an account past the wizard with none of its answers, and the
+  // wizard is the only place that collects them. `TRANSACTION_OPTIONS` because
+  // Prisma's two-second default is shorter than a cold Neon database takes to
+  // wake — see the note in `db.ts`.
+  await prisma.$transaction(
+    [
+      prisma.user.update({
+        where: { id: userId },
+        data: { name, timezone, onboardingCompleted: true },
+      }),
 
-    prisma.profile.upsert({
-      where: { userId },
-      create: { userId, ...profileFields },
-      update: profileFields,
-    }),
-  ]);
+      prisma.profile.upsert({
+        where: { userId },
+        create: { userId, ...profileFields },
+        update: profileFields,
+      }),
+    ],
+    TRANSACTION_OPTIONS,
+  );
 }

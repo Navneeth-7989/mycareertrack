@@ -1,8 +1,43 @@
 import { handleRouteError } from "@/lib/api/errors";
-import { createdWithWarnings, parseJsonBody } from "@/lib/api/responses";
+import {
+  createdWithWarnings,
+  okPaginated,
+  parseJsonBody,
+  parseSearchParams,
+} from "@/lib/api/responses";
 import { createApplicationRequestSchema } from "@/lib/validations/application";
+import { applicationFiltersSchema } from "@/lib/validations/application-filters";
 import { createApplication } from "@/server/mutations/applications";
+import { listApplications } from "@/server/queries/applications";
 import { requireApiUser } from "@/server/require-user";
+
+/**
+ * GET /api/applications — the filtered, sorted, paginated list (DESIGN.md §6).
+ *
+ * The filter schema cannot fail: an unrecognised value is dropped rather than
+ * rejected, and the page is clamped. See the header of
+ * `validations/application-filters` for why a list endpoint is forgiving where
+ * a write endpoint is strict.
+ *
+ * A page past the end returns an empty array with correct `meta` rather than a
+ * 404, per §8 — the client then has the numbers it needs to offer a way back.
+ *
+ * The list *page* does not call this. It is a Server Component that queries
+ * directly (§4), so this exists for the client-side pieces and as the
+ * documented REST surface, not as the page's data source.
+ */
+export async function GET(request: Request): Promise<Response> {
+  try {
+    const user = await requireApiUser();
+    const filters = parseSearchParams(new URL(request.url).searchParams, applicationFiltersSchema);
+
+    const { items, ...meta } = await listApplications(user.id, filters);
+
+    return okPaginated(items, meta);
+  } catch (error) {
+    return handleRouteError(error);
+  }
+}
 
 /**
  * POST /api/applications — create an application (DESIGN.md §6).
@@ -27,8 +62,6 @@ import { requireApiUser } from "@/server/require-user";
  * application it is creating (§8).
  *
  * TODO(phase-5): 100 creates/hour per user, per the rate-limit table in §6.
- *
- * GET arrives with the table view in the next step.
  */
 export async function POST(request: Request): Promise<Response> {
   try {

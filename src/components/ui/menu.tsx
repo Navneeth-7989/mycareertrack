@@ -1,6 +1,7 @@
 "use client";
 
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
+import { CheckIcon } from "lucide-react";
 import { cn } from "cn";
 
 /**
@@ -77,6 +78,59 @@ function MenuLinkItem({ className, ...props }: MenuPrimitive.LinkItem.Props) {
   );
 }
 
+/**
+ * A menu item that toggles.
+ *
+ * `closeOnClick` is false, which is the whole reason this exists as its own
+ * part: these are used for filters, where the normal action is to tick three
+ * statuses in a row. A menu that closed on each tick would make choosing two
+ * things take two trips.
+ *
+ * The indicator is a real box rather than a tick in empty space, so an
+ * unchecked row still shows where the tick will go — a bare checkmark that
+ * appears from nothing reads as decoration rather than as state.
+ */
+function MenuCheckboxItem({
+  className,
+  children,
+  closeOnClick = false,
+  ...props
+}: MenuPrimitive.CheckboxItem.Props) {
+  return (
+    <MenuPrimitive.CheckboxItem
+      data-slot="menu-checkbox-item"
+      closeOnClick={closeOnClick}
+      className={cn(ITEM_CLASSES, "pl-2", className)}
+      {...props}
+    >
+      <span
+        aria-hidden="true"
+        className="border-input bg-card group-data-[checked]/menu-checkbox:border-primary in-data-[checked]:border-primary in-data-[checked]:bg-primary in-data-[checked]:text-primary-foreground flex size-4 shrink-0 items-center justify-center rounded-[0.25rem] border shadow-xs transition-colors"
+      >
+        <MenuPrimitive.CheckboxItemIndicator>
+          <CheckIcon className="size-3 stroke-[3]" />
+        </MenuPrimitive.CheckboxItemIndicator>
+      </span>
+
+      {children}
+    </MenuPrimitive.CheckboxItem>
+  );
+}
+
+function MenuGroup({ ...props }: MenuPrimitive.Group.Props) {
+  return <MenuPrimitive.Group data-slot="menu-group" {...props} />;
+}
+
+function MenuGroupLabel({ className, ...props }: MenuPrimitive.GroupLabel.Props) {
+  return (
+    <MenuPrimitive.GroupLabel
+      data-slot="menu-group-label"
+      className={cn("text-muted-foreground px-2.5 py-1.5 text-xs font-medium", className)}
+      {...props}
+    />
+  );
+}
+
 function MenuSeparator({ className, ...props }: MenuPrimitive.Separator.Props) {
   return (
     <MenuPrimitive.Separator
@@ -87,4 +141,14 @@ function MenuSeparator({ className, ...props }: MenuPrimitive.Separator.Props) {
   );
 }
 
-export { Menu, MenuTrigger, MenuContent, MenuItem, MenuLinkItem, MenuSeparator };
+export {
+  Menu,
+  MenuTrigger,
+  MenuContent,
+  MenuItem,
+  MenuCheckboxItem,
+  MenuGroup,
+  MenuGroupLabel,
+  MenuLinkItem,
+  MenuSeparator,
+};

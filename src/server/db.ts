@@ -42,6 +42,27 @@ function createPrismaClient(): PrismaClient {
   });
 }
 
+/**
+ * Options for every `$transaction` in the app. Not optional, and not a
+ * micro-optimisation — Prisma's defaults will take a page down.
+ *
+ * Neon suspends an idle database, and the first query after that waits for it to
+ * wake. Prisma allows **2 seconds** by default to acquire a transaction, which a
+ * cold start blows through, and the result is a `P2028` "unable to start a
+ * transaction in the given time" thrown out of a Server Component — an error
+ * page, not a slow page. It is intermittent and it only happens after a quiet
+ * spell, which is exactly the shape of bug that reaches production.
+ *
+ * So: 10 seconds to acquire, and once started the work itself still has to
+ * finish in 20 or roll back. The second number is the one that stays strict —
+ * the risk being managed is a cold connection, not a slow query.
+ *
+ * A transaction is only used where the atomicity is load-bearing. Read paths use
+ * `Promise.all`, which has nothing to acquire and therefore cannot fail this
+ * way at all.
+ */
+export const TRANSACTION_OPTIONS = { maxWait: 10_000, timeout: 20_000 } as const;
+
 const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined;
 };

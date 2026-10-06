@@ -61,9 +61,14 @@ export async function searchCompanies(
   // can push the exact match past the cap: "tech" matches hundreds of rows, and
   // the company actually called "Tech" could sort anywhere among them. The
   // prefix query guarantees exact and leading matches are in the pool; the
-  // substring query fills the rest. One `$transaction` keeps it to a single
-  // round trip to Neon.
-  const [prefixMatches, substringMatches] = await prisma.$transaction([
+  // substring query fills the rest.
+  //
+  // `Promise.all` rather than a transaction — see the note in `db.ts`. There is
+  // no atomicity to protect in two reads, and a transaction here would make
+  // autocomplete fail outright on a cold database. This is the first place that
+  // actually happened, and it was dismissed as a one-off cold start at the time
+  // rather than fixed.
+  const [prefixMatches, substringMatches] = await Promise.all([
     prisma.company.findMany({
       where: { AND: [visible, { nameNormalized: { startsWith: needle } }] },
       select: companySelect,

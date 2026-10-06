@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Controller, useForm, useWatch } from "react-hook-form";
@@ -18,7 +17,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Button } from "@/components/ui/button";
+import { Button, ButtonLink } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
@@ -221,11 +220,17 @@ export function ApplicationForm() {
 
     setIsLeaving(true);
 
-    // TODO(step-3): go to the new application's row in the list, and then to
-    // its detail page once that exists. The dashboard is the honest destination
-    // while neither does — its counts move, which is visible proof the save
-    // landed.
-    router.push("/dashboard");
+    /*
+     * To the list, which now exists — and with no filters, because the default
+     * sort is newest first, so the application that was just saved is the top
+     * row. Landing on a filtered view that happens to exclude it would be the
+     * worst possible confirmation of a successful save.
+     *
+     * TODO(step-5): the detail page becomes the better destination once it
+     * exists, since the next thing a user does with a new application is add to
+     * it.
+     */
+    router.push("/applications");
   }
 
   const onSubmit = handleSubmit(() => save(false));
@@ -671,9 +676,21 @@ export function ApplicationForm() {
        * user finished typing.
        */}
       <div className="bg-background/85 sticky bottom-0 -mx-4 flex items-center justify-end gap-3 border-t px-4 py-4 backdrop-blur sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8">
-        <Button variant="ghost" size="lg" disabled={busy} render={<Link href="/dashboard" />}>
+        {/*
+         * `aria-disabled` and `pointer-events-none` rather than `disabled`,
+         * which an anchor does not have — see `ButtonLink`. While a save is in
+         * flight there is nothing to cancel anyway: the POST completes on the
+         * server regardless of whether this page is still here.
+         */}
+        <ButtonLink
+          variant="ghost"
+          size="lg"
+          href="/applications"
+          aria-disabled={busy || undefined}
+          className={busy ? "pointer-events-none opacity-50" : undefined}
+        >
           Cancel
-        </Button>
+        </ButtonLink>
 
         <Button type="submit" size="lg" disabled={busy}>
           {busy ? "Saving…" : "Save application"}

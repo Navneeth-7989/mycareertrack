@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { Button as ButtonPrimitive } from "@base-ui/react/button";
 import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "cn";
@@ -71,4 +72,42 @@ function Button({
   );
 }
 
-export { Button, buttonVariants };
+/**
+ * A link that looks like a button.
+ *
+ * This exists because `<Button render={<Link />}>` is wrong, and Base UI says
+ * so out loud: *"A component that acts as a button expected a native <button>
+ * because the `nativeButton` prop is true. Rendering a non-<button> removes
+ * native button semantics."* Silencing it with `nativeButton={false}` would be
+ * worse than the warning — it makes Base UI bolt `role="button"` and
+ * Space-to-activate onto an anchor, so the element claims to be a button while
+ * behaving like a link.
+ *
+ * A navigation is a link. It belongs in the tab order as a link, it opens in a
+ * new tab on middle-click or Cmd-click, it has a copyable address, and Enter
+ * activates it while Space scrolls the page. All of that is what `<a>` means,
+ * and none of it survives being wrapped in button behaviour. So this is an
+ * anchor wearing `buttonVariants`, with no button machinery at all.
+ *
+ * `disabled` is deliberately absent: there is no such thing on an anchor, and
+ * the honest ways to express it — omit the link, or render a real disabled
+ * `Button` — are both better than an anchor that looks dead but still
+ * navigates. `Pagination` renders a disabled `Button` at the first and last
+ * page for exactly that reason.
+ */
+function ButtonLink({
+  className,
+  variant = "default",
+  size = "default",
+  ...props
+}: React.ComponentProps<typeof Link> & VariantProps<typeof buttonVariants>) {
+  return (
+    <Link
+      data-slot="button-link"
+      className={cn(buttonVariants({ variant, size, className }))}
+      {...props}
+    />
+  );
+}
+
+export { Button, ButtonLink, buttonVariants };
