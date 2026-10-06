@@ -29,6 +29,17 @@ import { isDateOnlyString, parseDateOnly } from "@/lib/utils/date-only";
  * screen and the query can never disagree about what is being filtered.
  */
 
+/**
+ * The two presentations of the same filtered list.
+ *
+ * Lowercase in the URL and uppercase in the database (`ViewPreference`), which
+ * is not an oversight: `?view=board` is a thing a person reads and types, while
+ * the enum is Postgres's. The page maps between them in one place.
+ */
+export const APPLICATION_VIEWS = ["board", "table"] as const;
+
+export type ApplicationView = (typeof APPLICATION_VIEWS)[number];
+
 export const APPLICATION_SORTS = ["newest", "oldest", "updated", "deadline", "company"] as const;
 
 export type ApplicationSort = (typeof APPLICATION_SORTS)[number];
@@ -159,6 +170,18 @@ export const applicationFiltersSchema = z.object({
   appliedFrom: dateBound(),
   appliedTo: dateBound(),
 
+  /**
+   * Null when the URL does not say, which is not the same as a default. The
+   * page resolves it from `User.defaultView` — a preference the schema has no
+   * business knowing about, and which must not be overwritten by a default
+   * invented here.
+   */
+  view: anyParam().transform((raw): ApplicationView | null =>
+    typeof raw === "string" && (APPLICATION_VIEWS as readonly string[]).includes(raw)
+      ? (raw as ApplicationView)
+      : null,
+  ),
+
   sort: anyParam().transform((raw): ApplicationSort =>
     typeof raw === "string" && (APPLICATION_SORTS as readonly string[]).includes(raw)
       ? (raw as ApplicationSort)
@@ -179,9 +202,9 @@ export type ApplicationFilters = z.output<typeof applicationFiltersSchema>;
 export const EMPTY_APPLICATION_FILTERS: ApplicationFilters = applicationFiltersSchema.parse({});
 
 /**
- * Which filters are narrowing the list, ignoring sort and pagination — neither
- * of which hides a row, so neither belongs in a "3 filters active" count or is
- * cleared by "Clear all".
+ * Which filters are narrowing the list, ignoring sort, pagination and the view
+ * — none of which hides a row, so none belongs in a "3 filters active" count or
+ * is cleared by "Clear all".
  */
 export function activeFilterCount(filters: ApplicationFilters): number {
   return (
@@ -242,6 +265,13 @@ export function applicationFiltersToQuery(
 
   if (filters.appliedTo) {
     params.set("appliedTo", toParam(filters.appliedTo));
+  }
+
+  // Carried verbatim, including its absence. Adding `view=board` to a link that
+  // did not have it would pin a view the user never chose, and then their
+  // saved preference could never apply again.
+  if (filters.view) {
+    params.set("view", filters.view);
   }
 
   if (filters.sort !== DEFAULT_SORT) {

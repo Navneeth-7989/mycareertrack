@@ -2,7 +2,7 @@ import Link from "next/link";
 import { CalendarClock, ChevronRight, MapPin } from "lucide-react";
 import { cn } from "cn";
 
-import { StatusBadge } from "@/components/applications/status-badge";
+import { StatusCell } from "@/components/applications/status-cell";
 import {
   Table,
   TableBody,
@@ -37,6 +37,12 @@ import type { ApplicationListItem } from "@/server/queries/applications";
  * from an anchor. The detail page arrives in a later step; until then these
  * point at `/applications/[id]`, which is why this is the step that stops
  * rendering a placeholder list.
+ *
+ * The status column is the one interactive cell: `StatusCell` is the same
+ * dropdown the board cards carry, so an application can be moved from whichever
+ * view the user happens to be in. The table gets no drag, though — rows are
+ * ordered by whatever `sort` says, so there is no spatial meaning for a drop to
+ * have. Everything else here stays a Server Component.
  */
 
 export function ApplicationsTable({ items }: { items: ApplicationListItem[] }) {
@@ -81,7 +87,12 @@ export function ApplicationsTable({ items }: { items: ApplicationListItem[] }) {
                 </TableCell>
 
                 <TableCell>
-                  <StatusBadge status={item.status} />
+                  <StatusCell
+                    id={item.id}
+                    status={item.status}
+                    jobTitle={item.jobTitle}
+                    companyName={item.company.name}
+                  />
                 </TableCell>
 
                 <TableCell className="text-muted-foreground max-w-40 text-[0.8125rem]">
@@ -114,20 +125,26 @@ export function ApplicationsTable({ items }: { items: ApplicationListItem[] }) {
 
       <ul className="divide-border divide-y md:hidden">
         {items.map((item) => (
-          <li key={item.id}>
+          /*
+           * The status pill is a sibling of the link, not inside it. A button
+           * that opens a menu cannot live inside an anchor — it is invalid
+           * markup, and in practice the tap either navigates or opens the menu
+           * depending on where the finger landed. So the anchor takes the text
+           * and the remaining width, and the pill sits beside it.
+           */
+          <li
+            key={item.id}
+            className="has-[a:hover]:bg-muted/45 flex items-start gap-3 px-5 py-4 transition-colors"
+          >
             <Link
               href={`/applications/${item.id}`}
-              className="focus-visible:ring-ring/40 hover:bg-muted/45 flex flex-col gap-2.5 px-5 py-4 transition-colors focus-visible:ring-3 focus-visible:outline-none"
+              className="focus-visible:ring-ring/40 flex min-w-0 flex-1 flex-col gap-2.5 rounded-md focus-visible:ring-3 focus-visible:outline-none"
             >
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <p className="truncate font-medium">{item.jobTitle}</p>
-                  <p className="text-muted-foreground truncate text-[0.8125rem]">
-                    {item.company.name}
-                  </p>
-                </div>
-
-                <StatusBadge status={item.status} />
+              <div className="min-w-0">
+                <p className="truncate font-medium">{item.jobTitle}</p>
+                <p className="text-muted-foreground truncate text-[0.8125rem]">
+                  {item.company.name}
+                </p>
               </div>
 
               <div className="text-muted-foreground flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs">
@@ -148,6 +165,13 @@ export function ApplicationsTable({ items }: { items: ApplicationListItem[] }) {
                 ) : null}
               </div>
             </Link>
+
+            <StatusCell
+              id={item.id}
+              status={item.status}
+              jobTitle={item.jobTitle}
+              companyName={item.company.name}
+            />
           </li>
         ))}
       </ul>

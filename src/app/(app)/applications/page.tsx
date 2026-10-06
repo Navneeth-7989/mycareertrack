@@ -3,6 +3,8 @@ import { Briefcase, Plus, SearchX } from "lucide-react";
 
 import { ApplicationFilters } from "@/components/applications/application-filters";
 import { ApplicationsTable } from "@/components/applications/applications-table";
+import { KanbanBoard } from "@/components/applications/kanban-board";
+import { ViewSwitch } from "@/components/applications/view-switch";
 import { PageHeader } from "@/components/layout/page-header";
 import { EmptyState } from "@/components/shared/empty-state";
 import { Pagination } from "@/components/shared/pagination";
@@ -12,8 +14,13 @@ import {
   applicationFiltersSchema,
   applicationFiltersToQuery,
   hasActiveFilters,
+  type ApplicationView,
 } from "@/lib/validations/application-filters";
-import { getApplicationFacets, listApplications } from "@/server/queries/applications";
+import {
+  getApplicationFacets,
+  getBoardColumns,
+  listApplications,
+} from "@/server/queries/applications";
 import { requireUser } from "@/server/require-user";
 
 export const metadata: Metadata = {
@@ -33,10 +40,10 @@ export const metadata: Metadata = {
  * button, and none of that is possible if the filters only exist in a
  * `useState` somewhere.
  *
- * TODO(step-4): the Kanban board and the board/table toggle, honouring
- * `User.defaultView`. The table is unconditional until the board exists —
- * sending a user to their saved board preference before there is a board to
- * send them to would be worse than ignoring it.
+ * Two views over one query. `?view=` decides, and when it is absent the user's
+ * own `defaultView` does — which is why the filter schema parses `view` as
+ * nullable rather than defaulting it: a default invented in the schema would
+ * mean the preference could never apply.
  */
 export default async function ApplicationsPage({ searchParams }: PageProps<"/applications">) {
   const user = await requireUser();
@@ -47,8 +54,16 @@ export default async function ApplicationsPage({ searchParams }: PageProps<"/app
   // `validations/application-filters`.
   const filters = applicationFiltersSchema.parse(await searchParams);
 
-  const [result, facets] = await Promise.all([
+  // The URL wins; the stored preference is the fallback. `ViewPreference` is
+  // uppercase in Postgres and the URL parameter is lowercase, and this is the
+  // only place the two meet.
+  const view: ApplicationView = filters.view ?? (user.defaultView === "TABLE" ? "table" : "board");
+
+  const [result, board, facets] = await Promise.all([
+    // The table's query runs for both views, because its `total` is what the
+    // heading counts and it is one indexed count plus at most one page.
     listApplications(user.id, filters),
+    view === "board" ? getBoardColumns(user.id, filters) : null,
     getApplicationFacets(user.id),
   ]);
 
@@ -60,10 +75,14 @@ export default async function ApplicationsPage({ searchParams }: PageProps<"/app
         title="Applications"
         description={describe(facets.total, result.total, filtered)}
         actions={
-          <ButtonLink size="lg" href="/applications/new">
-            <Plus aria-hidden="true" data-icon="inline-start" />
-            New application
-          </ButtonLink>
+          <>
+            {facets.total > 0 ? <ViewSwitch filters={filters} current={view} /> : null}
+
+            <ButtonLink size="lg" href="/applications/new">
+              <Plus aria-hidden="true" data-icon="inline-start" />
+              New application
+            </ButtonLink>
+          </>
         }
       />
 
@@ -74,7 +93,16 @@ export default async function ApplicationsPage({ searchParams }: PageProps<"/app
        */}
       {facets.total > 0 ? <ApplicationFilters filters={filters} facets={facets} /> : null}
 
-      {result.items.length === 0 ? (
+      {/*
+       * The board branches first, because its own empty columns *are* its empty
+       * state — a board with nine labelled drop targets and no cards reads
+       * correctly, where the table needs a sentence explaining itself. The one
+       * case it cannot speak for is a brand-new account, which falls through to
+       * the shared empty state below.
+       */}
+      {view === "board" && board && facets.total > 0 ? (
+        <KanbanBoard columns={board} />
+      ) : result.items.length === 0 ? (
         facets.total === 0 ? (
           <EmptyState
             icon={Briefcase}
@@ -112,13 +140,17 @@ export default async function ApplicationsPage({ searchParams }: PageProps<"/app
         </Card>
       )}
 
-      <Pagination
-        page={result.page}
-        pageSize={result.pageSize}
-        total={result.total}
-        totalPages={result.totalPages}
-        hrefFor={(page) => pageHref(filters, page)}
-      />
+      {/* A board is not paged — it shows the whole pipeline, capped per column
+          with a link into the table for the overflow. */}
+      {view === "table" ? (
+        <Pagination
+          page={result.page}
+          pageSize={result.pageSize}
+          total={result.total}
+          totalPages={result.totalPages}
+          hrefFor={(page) => pageHref(filters, page)}
+        />
+      ) : null}
     </div>
   );
 }

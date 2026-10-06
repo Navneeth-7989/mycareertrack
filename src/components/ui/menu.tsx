@@ -21,21 +21,38 @@ function MenuContent({
   side = "bottom",
   sideOffset = 8,
   align = "end",
+  collisionPadding = 12,
+  collisionAvoidance,
   ...props
 }: MenuPrimitive.Popup.Props &
-  Pick<MenuPrimitive.Positioner.Props, "side" | "align" | "sideOffset">) {
+  Pick<
+    MenuPrimitive.Positioner.Props,
+    "side" | "align" | "sideOffset" | "collisionPadding" | "collisionAvoidance"
+  >) {
   return (
     <MenuPrimitive.Portal>
       <MenuPrimitive.Positioner
         side={side}
         sideOffset={sideOffset}
         align={align}
+        collisionAvoidance={collisionAvoidance}
+        // Keep the popup off the viewport edge. Without this a menu that only
+        // just fits is flush against the top of the window, which reads as
+        // clipped even when nothing is.
+        collisionPadding={collisionPadding}
         className="isolate z-50"
       >
         <MenuPrimitive.Popup
           data-slot="menu-content"
           className={cn(
-            "bg-popover text-popover-foreground border-border data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95 data-[side=bottom]:slide-in-from-top-2 data-[side=top]:slide-in-from-bottom-2 min-w-56 origin-(--transform-origin) overflow-hidden rounded-xl border p-1.5 shadow-lg duration-100",
+            // `max-h-(--available-height)` is the important one: Base UI
+            // measures the space between the anchor and the viewport edge and
+            // publishes it here, so a menu with more items than fit on screen
+            // scrolls instead of overflowing. Without it a tall menu flips to
+            // `side=top` and runs straight off the top of the window, taking
+            // its first few items with it — the combobox and select popups
+            // already clamp the same way.
+            "bg-popover text-popover-foreground border-border data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95 data-[side=bottom]:slide-in-from-top-2 data-[side=top]:slide-in-from-bottom-2 max-h-(--available-height) min-w-56 origin-(--transform-origin) scroll-py-1.5 overflow-y-auto overscroll-contain rounded-xl border p-1.5 shadow-lg duration-100",
             className,
           )}
           {...props}
@@ -105,7 +122,9 @@ function MenuCheckboxItem({
     >
       <span
         aria-hidden="true"
-        className="border-input bg-card group-data-[checked]/menu-checkbox:border-primary in-data-[checked]:border-primary in-data-[checked]:bg-primary in-data-[checked]:text-primary-foreground flex size-4 shrink-0 items-center justify-center rounded-[0.25rem] border shadow-xs transition-colors"
+        // `in-data-[checked]` is Tailwind's ancestor variant: Base UI puts
+        // `data-checked` on the item root, and this box is inside it.
+        className="border-input bg-card in-data-[checked]:border-primary in-data-[checked]:bg-primary in-data-[checked]:text-primary-foreground flex size-4 shrink-0 items-center justify-center rounded-[0.25rem] border shadow-xs transition-colors"
       >
         <MenuPrimitive.CheckboxItemIndicator>
           <CheckIcon className="size-3 stroke-[3]" />
@@ -114,6 +133,41 @@ function MenuCheckboxItem({
 
       {children}
     </MenuPrimitive.CheckboxItem>
+  );
+}
+
+const MenuRadioGroup = MenuPrimitive.RadioGroup;
+
+/**
+ * A menu item that picks one of a set — the status control on a board card.
+ *
+ * Unlike `MenuCheckboxItem` this *does* close on click, which is the default
+ * and the right behaviour: a single choice is finished the moment it is made,
+ * and a menu that stayed open would invite a second click that undoes the
+ * first.
+ *
+ * The indicator is a dot in a ring rather than a tick, matching the radio
+ * primitive elsewhere in the app, so "one of these" and "any of these" look
+ * different before either is read.
+ */
+function MenuRadioItem({ className, children, ...props }: MenuPrimitive.RadioItem.Props) {
+  return (
+    <MenuPrimitive.RadioItem
+      data-slot="menu-radio-item"
+      className={cn(ITEM_CLASSES, "pl-2", className)}
+      {...props}
+    >
+      <span
+        aria-hidden="true"
+        className="border-input bg-card in-data-[checked]:border-primary flex size-4 shrink-0 items-center justify-center rounded-full border shadow-xs transition-colors"
+      >
+        <MenuPrimitive.RadioItemIndicator>
+          <span className="bg-primary block size-2 rounded-full" />
+        </MenuPrimitive.RadioItemIndicator>
+      </span>
+
+      {children}
+    </MenuPrimitive.RadioItem>
   );
 }
 
@@ -150,5 +204,7 @@ export {
   MenuGroup,
   MenuGroupLabel,
   MenuLinkItem,
+  MenuRadioGroup,
+  MenuRadioItem,
   MenuSeparator,
 };

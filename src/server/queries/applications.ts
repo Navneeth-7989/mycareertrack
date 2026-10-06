@@ -215,6 +215,82 @@ function addDays(date: Date, days: number): Date {
 }
 
 /**
+ * How many cards one column renders before it says "+N more".
+ *
+ * §8's "thousands of applications" case applies to the board more sharply than
+ * to the table: the table pages, while a board has no natural page boundary and
+ * would happily try to render 800 draggable cards in one column. The cap keeps
+ * the DOM bounded; the count beside the heading stays honest about what was
+ * left out, and the table view is where someone goes to see all of it.
+ */
+export const BOARD_COLUMN_LIMIT = 50;
+
+export type BoardColumn = {
+  status: ApplicationStatusValue;
+  items: ApplicationListItem[];
+  /** Matching the current filters, which may exceed what `items` holds. */
+  total: number;
+  hasMore: boolean;
+};
+
+/**
+ * The Kanban board: every status as a column, under the same filters as the
+ * table.
+ *
+ * One count query, then one page of cards per status that actually has any.
+ * The alternative — a single `findMany` with a global cap, grouped in memory —
+ * starves columns: a user with 400 saved roles would fetch 400 SAVED rows and
+ * none of their interviews. Per-status queries are each served by the
+ * `[userId, status]` index, and only the non-empty ones are issued, so a new
+ * account costs one or two rather than nine.
+ *
+ * Pagination is deliberately ignored. A board is not paged — `page` and
+ * `pageSize` belong to the table, and honouring them here would silently show
+ * a fraction of the pipeline.
+ */
+export async function getBoardColumns(
+  userId: string,
+  filters: ApplicationFilters,
+): Promise<BoardColumn[]> {
+  const where = buildWhere(userId, filters);
+
+  const counts = await prisma.application.groupBy({
+    by: ["status"],
+    where,
+    _count: { _all: true },
+    orderBy: { status: "asc" },
+  });
+
+  const totals = new Map(counts.map((row) => [row.status, row._count._all]));
+
+  const populated = APPLICATION_STATUSES.filter((status) => (totals.get(status) ?? 0) > 0);
+
+  const pages = await Promise.all(
+    populated.map((status) =>
+      prisma.application.findMany({
+        where: { AND: [where, { status }] },
+        select: listSelect,
+        orderBy: buildOrderBy(filters.sort),
+        take: BOARD_COLUMN_LIMIT,
+      }),
+    ),
+  );
+
+  const byStatus = new Map(populated.map((status, index) => [status, pages[index] ?? []]));
+
+  // Every status gets a column, including the empty ones: a board is a picture
+  // of a pipeline, and a missing "Offer" column would read as "offers are not
+  // tracked" rather than "you have none yet". An empty column is also the only
+  // place a card can be dropped to reach that status.
+  return APPLICATION_STATUSES.map((status) => {
+    const items = byStatus.get(status) ?? [];
+    const total = totals.get(status) ?? 0;
+
+    return { status, items, total, hasMore: total > items.length };
+  });
+}
+
+/**
  * The options the filter bar offers, and the counts beside them.
  *
  * Computed across **all** of the user's applications rather than across the

@@ -55,6 +55,7 @@ describe("defaults", () => {
       location: [],
       appliedFrom: null,
       appliedTo: null,
+      view: null,
       sort: DEFAULT_SORT,
       page: 1,
       pageSize: DEFAULT_PAGE_SIZE,
@@ -182,15 +183,41 @@ describe("paging", () => {
   });
 });
 
+describe("view", () => {
+  it("is null when the URL does not say", () => {
+    // Not a default. Null is what lets `User.defaultView` apply; a default
+    // invented here would silently override the user's own preference forever.
+    expect(fromQuery("").view).toBeNull();
+  });
+
+  it("reads both views", () => {
+    expect(fromQuery("view=board").view).toBe("board");
+    expect(fromQuery("view=table").view).toBe("table");
+  });
+
+  it("falls back to null for anything else", () => {
+    expect(fromQuery("view=kanban").view).toBeNull();
+    expect(fromQuery("view=BOARD").view).toBeNull();
+  });
+
+  it("survives the round-trip, including its absence", () => {
+    // Adding `view=board` to a link that did not carry one would pin a view the
+    // user never chose.
+    expect(applicationFiltersToQuery(fromQuery(""))).toBe("");
+    expect(applicationFiltersToQuery(fromQuery("view=table"))).toBe("view=table");
+    expect(fromQuery(applicationFiltersToQuery(fromQuery("view=board"))).view).toBe("board");
+  });
+});
+
 describe("activeFilterCount", () => {
   it("is zero for an unfiltered view", () => {
     expect(activeFilterCount(fromQuery(""))).toBe(0);
     expect(hasActiveFilters(fromQuery(""))).toBe(false);
   });
 
-  it("ignores sort and paging, which hide nothing", () => {
+  it("ignores sort, paging and the view, which hide nothing", () => {
     // Otherwise "Clear all (1)" appears on a list that is showing everything.
-    expect(activeFilterCount(fromQuery("sort=deadline&page=3&pageSize=50"))).toBe(0);
+    expect(activeFilterCount(fromQuery("sort=deadline&page=3&pageSize=50&view=board"))).toBe(0);
   });
 
   it("counts each chosen value, not each filter", () => {

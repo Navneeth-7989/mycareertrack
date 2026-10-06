@@ -295,6 +295,19 @@ export const EMPTY_APPLICATION_FORM: Required<ApplicationFormValues> = {
   recruiterPhone: "",
 };
 
+/**
+ * `PATCH /api/applications/:id/status` — the board's and the detail page's
+ * status control (§6).
+ *
+ * Its own endpoint and its own schema rather than a field on the general
+ * update, because it is not a field edit: it writes a timeline event and
+ * maintains `appliedAt` and `firstResponseAt` in the same transaction. A status
+ * arriving through a partial update would skip all of that.
+ */
+export const updateStatusSchema = z.object({
+  status: z.enum(APPLICATION_STATUSES),
+});
+
 /** The duplicate advisory returned alongside a created application (§6). */
 export const APPLICATION_WARNING_CODES = ["POSSIBLE_DUPLICATE"] as const;
 
