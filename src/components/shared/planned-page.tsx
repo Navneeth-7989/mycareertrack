@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import type { LucideIcon } from "lucide-react";
 
 import { PageHeader } from "@/components/layout/page-header";
@@ -26,6 +27,7 @@ export function PlannedPage({
   icon: Icon,
   arrivesWith,
   whatsComing,
+  actions,
 }: {
   title: string;
   description: string;
@@ -33,10 +35,18 @@ export function PlannedPage({
   /** Completes the sentence "Arrives with …". */
   arrivesWith: string;
   whatsComing: readonly string[];
+  /**
+   * For the half-built case: a section whose *page* is still planned but which
+   * already has a working action elsewhere. `/applications` is the one — the
+   * create form exists before the list that will show its results — and a
+   * placeholder that hides a feature the user can already use is worse than no
+   * placeholder at all.
+   */
+  actions?: ReactNode;
 }) {
   return (
     <div className="flex flex-col gap-8">
-      <PageHeader title={title} description={description} />
+      <PageHeader title={title} description={description} actions={actions} />
 
       <Card className="py-0">
         <CardContent className="flex flex-col items-center gap-5 px-6 py-14 text-center">

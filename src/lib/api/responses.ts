@@ -16,6 +16,22 @@ export function created<T>(data: T): Response {
   return Response.json({ data }, { status: 201 });
 }
 
+/**
+ * A 201 that carries advisories alongside the created row (DESIGN.md §6).
+ *
+ * Warnings sit beside `data`, not inside it: they describe the *request*, not
+ * the record. A duplicate advisory is not a property of the application that
+ * was saved — re-read that row tomorrow and it says nothing about having looked
+ * like a duplicate on the day — so putting it in `data` would mean inventing a
+ * field that only ever exists in one response.
+ *
+ * An empty list is omitted rather than sent as `[]`, so a client can treat the
+ * key's presence as "there is something to show".
+ */
+export function createdWithWarnings<T, W>(data: T, warnings: W[]): Response {
+  return Response.json({ data, ...(warnings.length > 0 ? { warnings } : {}) }, { status: 201 });
+}
+
 export function noContent(): Response {
   return new Response(null, { status: 204 });
 }

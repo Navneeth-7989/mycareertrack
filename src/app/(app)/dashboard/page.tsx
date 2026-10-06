@@ -1,10 +1,12 @@
 import type { Metadata } from "next";
-import { Inbox } from "lucide-react";
+import Link from "next/link";
+import { Inbox, Plus } from "lucide-react";
 
 import { StatTile } from "@/components/dashboard/stat-tile";
 import { WelcomeToast } from "@/components/dashboard/welcome-toast";
 import { PageHeader } from "@/components/layout/page-header";
 import { EmptyState } from "@/components/shared/empty-state";
+import { Button } from "@/components/ui/button";
 import { getDashboardSummary } from "@/server/queries/dashboard";
 import { requireUser } from "@/server/require-user";
 
@@ -28,9 +30,8 @@ export const metadata: Metadata = {
  * a page gets the user, and the second call is served from the same request's
  * cache rather than hitting the database twice.
  *
- * TODO(phase-2): the primary "New application" action belongs in the header
- * here once the create form exists. TODO(phase-3): the upcoming-interviews,
- * deadline and task lists replace the empty state below.
+ * TODO(phase-3): the upcoming-interviews, deadline and task lists replace the
+ * empty state below.
  */
 export default async function DashboardPage({ searchParams }: PageProps<"/dashboard">) {
   const user = await requireUser();
@@ -46,6 +47,12 @@ export default async function DashboardPage({ searchParams }: PageProps<"/dashbo
       <PageHeader
         title={firstName ? `Welcome back, ${firstName}` : "Welcome back"}
         description="Every application, interview and deadline you are tracking, at a glance."
+        actions={
+          <Button size="lg" render={<Link href="/applications/new" />}>
+            <Plus aria-hidden="true" data-icon="inline-start" />
+            New application
+          </Button>
+        }
       />
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
@@ -82,7 +89,13 @@ export default async function DashboardPage({ searchParams }: PageProps<"/dashbo
         <EmptyState
           icon={Inbox}
           title="No applications yet"
-          description="Adding and tracking applications is the next block of the build. Your profile is saved, so there is nothing you need to do here right now."
+          description="Log the first role you have found or applied to, and these counts start moving."
+          action={
+            <Button render={<Link href="/applications/new" />}>
+              <Plus aria-hidden="true" data-icon="inline-start" />
+              New application
+            </Button>
+          }
         />
       ) : (
         <EmptyState
