@@ -182,6 +182,27 @@ function ComboboxEmpty({ className, ...props }: ComboboxPrimitive.Empty.Props) {
   );
 }
 
+/**
+ * A politely announced status line for a list that loads over the network —
+ * "Searching…", "Nothing found", "Could not load".
+ *
+ * Base UI requires this element to stay mounted so screen readers notice the
+ * change, which is why it carries `data-empty` styling rather than being
+ * conditionally rendered: render an empty string inside it, not nothing.
+ */
+function ComboboxStatus({ className, ...props }: ComboboxPrimitive.Status.Props) {
+  return (
+    <ComboboxPrimitive.Status
+      data-slot="combobox-status"
+      className={cn(
+        "text-muted-foreground flex items-center justify-center gap-2 px-4 py-6 text-center text-[0.8125rem] empty:hidden",
+        className,
+      )}
+      {...props}
+    />
+  );
+}
+
 function ComboboxSeparator({ className, ...props }: ComboboxPrimitive.Separator.Props) {
   return (
     <ComboboxPrimitive.Separator
@@ -263,6 +284,7 @@ export {
   ComboboxLabel,
   ComboboxCollection,
   ComboboxEmpty,
+  ComboboxStatus,
   ComboboxSeparator,
   ComboboxChips,
   ComboboxChip,

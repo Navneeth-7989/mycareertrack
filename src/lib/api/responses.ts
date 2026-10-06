@@ -53,7 +53,44 @@ export async function parseJsonBody<S extends z.ZodType>(
     throw new ValidationError({}, "Request body must be valid JSON");
   }
 
-  const result = schema.safeParse(body);
+  return parseWith(schema, body);
+}
+
+/**
+ * The query-string counterpart of `parseJsonBody`.
+ *
+ * `URLSearchParams` is flattened to a plain object first, because Zod cannot
+ * read an iterable. A key that appears more than once becomes an array —
+ * `?status=APPLIED&status=OFFER` is how the repeatable filters in DESIGN.md §6
+ * arrive — while a key that appears once stays a string. Schemas for repeatable
+ * parameters therefore have to accept both shapes, since the wire cannot tell a
+ * one-item list from a single value.
+ */
+export function parseSearchParams<S extends z.ZodType>(
+  searchParams: URLSearchParams,
+  schema: S,
+): z.output<S> {
+  const record: Record<string, string | string[]> = {};
+
+  for (const key of new Set(searchParams.keys())) {
+    const values = searchParams.getAll(key);
+
+    // Absent and present-but-empty are the same answer for a filter, and
+    // leaving "" in would defeat every `.optional()` in the schema.
+    const meaningful = values.filter((value) => value !== "");
+
+    if (meaningful.length === 1) {
+      record[key] = meaningful[0]!;
+    } else if (meaningful.length > 1) {
+      record[key] = meaningful;
+    }
+  }
+
+  return parseWith(schema, record);
+}
+
+function parseWith<S extends z.ZodType>(schema: S, input: unknown): z.output<S> {
+  const result = schema.safeParse(input);
 
   if (!result.success) {
     const fields: FieldErrors = {};
