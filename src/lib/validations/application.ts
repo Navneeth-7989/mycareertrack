@@ -12,6 +12,7 @@ import {
   type EmploymentTypeValue,
   type PriorityValue,
 } from "@/lib/constants/application";
+import { EVENT_TYPES } from "@/lib/constants/event";
 import { WORK_MODES, type WorkModeValue } from "@/lib/constants/work-mode";
 import { isDateOnlyString, parseDateOnly, toDateInputValue } from "@/lib/utils/date-only";
 import { companyNameSchema } from "@/lib/validations/company";
@@ -414,6 +415,122 @@ export function toApplicationFormValues(
 function isOfferedCurrency(value: string | null): value is CurrencyValue {
   return value !== null && (CURRENCIES as readonly string[]).includes(value);
 }
+
+/**
+ * The deleted-application snapshot that powers undo (DESIGN.md §8).
+ *
+ * Delete is real: the row and its children are gone the moment the request
+ * returns. What comes back is this — everything needed to put them back —
+ * which the client holds for the life of the toast and posts to
+ * `/api/applications/:id/restore` if the user clicks Undo.
+ *
+ * **It crosses the trust boundary twice**, server → browser → server, so it is
+ * validated on the way back in like any other request body and nothing in it is
+ * trusted for authorization. `userId` is deliberately *not* a field: the restore
+ * takes identity from the session, exactly as §4 requires, so a hand-crafted
+ * snapshot cannot plant a row in someone else's account. The mutation separately
+ * re-checks that the company and every contact id belong to the caller.
+ *
+ * Ids are preserved rather than regenerated. A restored application is the same
+ * application — the link that was open in another tab still works, and the
+ * timeline keeps the entries it had rather than being re-synthesised with
+ * today's dates.
+ */
+
+/**
+ * A date that has been through `JSON.stringify` and is now an ISO string — or
+ * is still a `Date`, when the snapshot never left the server. `z.coerce.date()`
+ * accepts both and rejects anything that is not a real date.
+ */
+const wireDate = z.coerce.date();
+
+/**
+ * The nullable form, written as a union so the null branch is matched *before*
+ * coercion is ever attempted.
+ *
+ * The hazard it guards against is real and silent: `z.coerce.date()` on its own
+ * turns `null` into `new Date(null)`, which is the epoch rather than an error —
+ * verified, not assumed. A nullable `appliedAt` reaching a bare coercion would
+ * come back as 1 January 1970, and that date counts as a submitted application
+ * in every rate in §3. `.nullable()` happens to short-circuit the same way; the
+ * union says so in the shape rather than relying on a wrapper's ordering.
+ */
+const nullableWireDate = z.union([z.null(), wireDate]);
+
+/**
+ * Bounds on the child arrays. Not a product limit — a request-size one. These
+ * arrive from the browser, and an unbounded array is an invitation to post ten
+ * thousand events in one body.
+ */
+const MAX_SNAPSHOT_EVENTS = 500;
+const MAX_SNAPSHOT_CONTACTS = 100;
+
+export const applicationSnapshotSchema = z.object({
+  application: z.object({
+    id: z.string().min(1).max(64),
+    companyId: z.string().min(1).max(64),
+    jobTitle: z.string().min(1),
+    jobUrl: z.string().nullable(),
+    location: z.string().nullable(),
+    workMode: z.enum(WORK_MODES).nullable(),
+    employmentType: z.enum(EMPLOYMENT_TYPES).nullable(),
+    salaryMin: z.number().int().nullable(),
+    salaryMax: z.number().int().nullable(),
+    currency: z.string().nullable(),
+    status: z.enum(APPLICATION_STATUSES),
+    priority: z.enum(PRIORITIES),
+    source: z.enum(APPLICATION_SOURCES).nullable(),
+    savedAt: wireDate,
+    appliedAt: nullableWireDate,
+    deadline: nullableWireDate,
+    jobDescription: z.string().nullable(),
+    resumeId: z.string().max(64).nullable(),
+    firstResponseAt: nullableWireDate,
+    createdAt: wireDate,
+  }),
+  events: z
+    .array(
+      z.object({
+        id: z.string().min(1).max(64),
+        type: z.enum(EVENT_TYPES),
+        title: z.string(),
+        description: z.string().nullable(),
+        occurredAt: wireDate,
+        isAutomatic: z.boolean(),
+        createdAt: wireDate,
+      }),
+    )
+    .max(MAX_SNAPSHOT_EVENTS),
+  contacts: z
+    .array(
+      z.object({
+        contactId: z.string().min(1).max(64),
+        role: z.string().nullable(),
+        createdAt: wireDate,
+      }),
+    )
+    .max(MAX_SNAPSHOT_CONTACTS),
+});
+
+export type ApplicationSnapshot = z.output<typeof applicationSnapshotSchema>;
+
+/** What `POST /api/applications/:id/restore` accepts. */
+export const restoreApplicationSchema = z.object({ snapshot: applicationSnapshotSchema });
+
+/**
+ * Reads the snapshot out of a delete response.
+ *
+ * Strict rather than tolerant, unlike `createdApplicationIdSchema`: a snapshot
+ * that cannot be parsed means undo is not available, and the client needs to
+ * know that in order to say so rather than offering a button that will fail.
+ */
+export const deletedApplicationSchema = z.object({
+  data: z.object({
+    jobTitle: z.string(),
+    companyName: z.string(),
+    snapshot: applicationSnapshotSchema,
+  }),
+});
 
 /**
  * `PATCH /api/applications/:id/status` — the board's and the detail page's

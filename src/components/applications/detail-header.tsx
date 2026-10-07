@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { ArrowLeft, ExternalLink, Pencil } from "lucide-react";
 
+import { DeleteApplication } from "@/components/applications/delete-application";
 import { StatusCell } from "@/components/applications/status-cell";
 import { ButtonLink } from "@/components/ui/button";
 import { EMPLOYMENT_TYPE_LABELS } from "@/lib/constants/application";
@@ -100,6 +101,19 @@ export function DetailHeader({ application }: { application: ApplicationDetail }
             <Pencil aria-hidden="true" data-icon="inline-start" />
             Edit
           </ButtonLink>
+
+          {/*
+           * Last, and the only tinted-red control on the page. `destructive` is
+           * deliberately not a filled button here (see `buttonVariants`): a solid
+           * red button would be the loudest thing on the screen, and in this
+           * product destroying a row is never the main action.
+           */}
+          <DeleteApplication
+            id={application.id}
+            jobTitle={application.jobTitle}
+            companyName={application.company.name}
+            preview={application._count}
+          />
         </div>
       </div>
     </div>

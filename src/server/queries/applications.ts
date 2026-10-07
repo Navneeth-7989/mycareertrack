@@ -138,6 +138,27 @@ const detailSelect = {
     },
     orderBy: { createdAt: "asc" },
   },
+  /*
+   * What a delete would take with it — the cascade preview §8 asks for, counted
+   * in the database rather than inferred from the arrays above. It has to be:
+   * `events` is capped at `TIMELINE_LIMIT`, so an application with eighty
+   * entries would otherwise promise to delete fifty.
+   *
+   * All six relations are counted, including the five that are always zero until
+   * Phase 3 builds them. The dialog renders only the non-zero ones, so interviews
+   * and assessments start appearing in the warning the day they can exist,
+   * without anyone having to remember to come back here.
+   */
+  _count: {
+    select: {
+      events: true,
+      contacts: true,
+      interviews: true,
+      assessments: true,
+      notes: true,
+      tasks: true,
+    },
+  },
 } satisfies Prisma.ApplicationSelect;
 
 /**

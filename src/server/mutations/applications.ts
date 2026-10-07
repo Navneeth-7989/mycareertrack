@@ -8,6 +8,7 @@ import {
   type ApplicationStatusValue,
 } from "@/lib/constants/application";
 import type {
+  ApplicationSnapshot,
   ApplicationWarning,
   CreateApplicationPayload,
   UpdateApplicationPayload,
@@ -426,6 +427,201 @@ function nextAppliedAt(
   }
 
   return submitted ?? existing.appliedAt ?? new Date();
+}
+
+export type DeletedApplication = {
+  jobTitle: string;
+  companyName: string;
+  /** Everything needed to put it back. See `applicationSnapshotSchema`. */
+  snapshot: ApplicationSnapshot;
+};
+
+/**
+ * Deletes an application, and returns what it would take to undo
+ * (DESIGN.md §6, §8).
+ *
+ * **The delete is real.** The row and every child go in this transaction, and
+ * the ~10-second undo in §8 is built on the snapshot rather than on a hidden
+ * flag or a deferred request. That was a deliberate choice over the two
+ * alternatives: holding the delete client-side means the app shows a row as gone
+ * while it is still there — untrue for ten seconds, and resurrected by a refresh
+ * — while a `deletedAt` column is the archive flag the product deliberately does
+ * not have, and would put a filter in every list, board, count and facet query
+ * in the codebase.
+ *
+ * What the database does for us: `onDelete: Cascade` on every child relation
+ * (§3) means events, interviews, assessments, notes, tasks and contact *links*
+ * all go with it, in one statement, with no orphan possible. What it must not
+ * do is reach further — `Company` and `Resume` are `onDelete: Restrict` and are
+ * only *unlinked*, because deleting an application is not a reason to delete the
+ * company it was at or the resume that was sent.
+ *
+ * The snapshot is read before the delete and inside the same transaction, so it
+ * describes exactly what was removed. Reading it outside would leave a window in
+ * which a concurrent edit lands between the two and the undo quietly restores
+ * stale values.
+ */
+export async function deleteApplication(
+  userId: string,
+  applicationId: string,
+): Promise<DeletedApplication> {
+  return prisma.$transaction(async (tx) => {
+    // Ownership in the WHERE clause (§4). Null becomes a 404, never a 403 (§6),
+    // so a delete aimed at someone else's id cannot confirm it exists.
+    const existing = await tx.application.findFirst({
+      where: { id: applicationId, userId },
+      select: {
+        id: true,
+        companyId: true,
+        jobTitle: true,
+        jobUrl: true,
+        location: true,
+        workMode: true,
+        employmentType: true,
+        salaryMin: true,
+        salaryMax: true,
+        currency: true,
+        status: true,
+        priority: true,
+        source: true,
+        savedAt: true,
+        appliedAt: true,
+        deadline: true,
+        jobDescription: true,
+        resumeId: true,
+        firstResponseAt: true,
+        createdAt: true,
+        company: { select: { name: true } },
+        events: {
+          select: {
+            id: true,
+            type: true,
+            title: true,
+            description: true,
+            occurredAt: true,
+            isAutomatic: true,
+            createdAt: true,
+          },
+          orderBy: { occurredAt: "asc" },
+        },
+        contacts: {
+          select: { contactId: true, role: true, createdAt: true },
+          orderBy: { createdAt: "asc" },
+        },
+      },
+    });
+
+    if (!existing) {
+      throw new NotFoundError("Application not found");
+    }
+
+    const { company, events, contacts, ...application } = existing;
+
+    await tx.application.delete({ where: { id: existing.id } });
+
+    return {
+      jobTitle: application.jobTitle,
+      companyName: company.name,
+      snapshot: { application, events, contacts },
+    };
+  }, TRANSACTION_OPTIONS);
+}
+
+/**
+ * Puts a deleted application back, from the snapshot the delete returned.
+ *
+ * Every id is preserved, so this restores *the same* application rather than a
+ * copy of it: a link someone had open still resolves, and the timeline keeps its
+ * original entries instead of being re-synthesised with today's dates.
+ *
+ * **Nothing in the snapshot is trusted for authorization.** It has been through
+ * the browser, so `userId` is taken from the session and written onto every row,
+ * and the two foreign keys that could point somewhere they should not are
+ * re-checked here rather than assumed:
+ *
+ * - **`companyId`** must be a company this user can see — seeded, or created by
+ *   them — the same rule as `queries/companies`. A forged id would otherwise
+ *   attach the restored application to another user's private company.
+ * - **`contactId`** must belong to this user. Contacts that fail are dropped
+ *   rather than rejected, because the honest reason for one to vanish is that
+ *   the user deleted it during the undo window, and losing a link is a smaller
+ *   harm than refusing to restore the application at all.
+ *
+ * Restoring twice is not an error. The second Undo on the same toast finds the
+ * application already there and returns it, which is what the user meant.
+ */
+export async function restoreApplication(
+  userId: string,
+  snapshot: ApplicationSnapshot,
+): Promise<{ id: string; jobTitle: string }> {
+  return prisma.$transaction(async (tx) => {
+    const { application, events, contacts } = snapshot;
+
+    const alreadyThere = await tx.application.findFirst({
+      where: { id: application.id, userId },
+      select: { id: true, jobTitle: true },
+    });
+
+    if (alreadyThere) {
+      return alreadyThere;
+    }
+
+    const company = await tx.company.findFirst({
+      where: {
+        id: application.companyId,
+        OR: [{ createdByUserId: null }, { createdByUserId: userId }],
+      },
+      select: { id: true },
+    });
+
+    if (!company) {
+      throw new ConflictError("The company this application belonged to is no longer available");
+    }
+
+    // Phase 4's column. Checked now rather than later, because a snapshot is
+    // exactly the shape of request that would carry someone else's resume id.
+    const resumeId = application.resumeId
+      ? ((
+          await tx.resume.findFirst({
+            where: { id: application.resumeId, userId },
+            select: { id: true },
+          })
+        )?.id ?? null)
+      : null;
+
+    const restored = await tx.application.create({
+      data: {
+        ...application,
+        resumeId,
+        // From the session, never from the body (§4, rule 3).
+        userId,
+      },
+      select: { id: true, jobTitle: true },
+    });
+
+    if (events.length > 0) {
+      await tx.applicationEvent.createMany({
+        data: events.map((event) => ({ ...event, applicationId: restored.id, userId })),
+      });
+    }
+
+    const owned = await tx.contact.findMany({
+      where: { userId, id: { in: contacts.map((link) => link.contactId) } },
+      select: { id: true },
+    });
+
+    const ownedIds = new Set(owned.map((contact) => contact.id));
+
+    const links = contacts.filter((link) => ownedIds.has(link.contactId));
+
+    if (links.length > 0) {
+      await tx.applicationContact.createMany({
+        data: links.map((link) => ({ ...link, applicationId: restored.id })),
+      });
+    }
+
+    return restored;
+  }, TRANSACTION_OPTIONS);
 }
 
 export async function createApplication(

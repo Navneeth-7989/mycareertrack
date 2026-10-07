@@ -17,10 +17,12 @@ import {
 import { EVENT_TYPES, EVENT_TYPE_LABELS } from "@/lib/constants/event";
 import {
   EMPTY_APPLICATION_FORM,
+  applicationSnapshotSchema,
   applicationWarningsSchema,
   createApplicationRequestSchema,
   createApplicationSchema,
   createdApplicationIdSchema,
+  deletedApplicationSchema,
   toApplicationFormValues,
   updateApplicationRequestSchema,
 } from "@/lib/validations/application";
@@ -564,5 +566,153 @@ describe("toApplicationFormValues", () => {
 
     expect(values.recruiterRole).toBe("Referrer");
     expect(values.recruiterPhone).toBe("");
+  });
+});
+
+/**
+ * The undo snapshot. It is the only thing in the product that leaves the server
+ * and comes back expecting to be written, so these are mostly about what it
+ * must refuse.
+ */
+describe("applicationSnapshotSchema", () => {
+  const snapshot = {
+    application: {
+      id: "cl_app",
+      companyId: "cl_company",
+      jobTitle: "SDE Intern",
+      jobUrl: null,
+      location: null,
+      workMode: null,
+      employmentType: null,
+      salaryMin: null,
+      salaryMax: null,
+      currency: "INR",
+      status: "APPLIED",
+      priority: "MEDIUM",
+      source: null,
+      savedAt: new Date("2026-10-01T00:00:00.000Z"),
+      appliedAt: new Date("2026-10-02T00:00:00.000Z"),
+      deadline: null,
+      jobDescription: null,
+      resumeId: null,
+      firstResponseAt: null,
+      createdAt: new Date("2026-10-01T00:00:00.000Z"),
+    },
+    events: [
+      {
+        id: "cl_event",
+        type: "APPLIED",
+        title: "Application submitted",
+        description: null,
+        occurredAt: new Date("2026-10-02T00:00:00.000Z"),
+        isAutomatic: true,
+        createdAt: new Date("2026-10-02T00:00:00.000Z"),
+      },
+    ],
+    contacts: [
+      {
+        contactId: "cl_contact",
+        role: "Recruiter",
+        createdAt: new Date("2026-10-02T00:00:00.000Z"),
+      },
+    ],
+  };
+
+  it("survives the JSON round trip it is designed for", () => {
+    /*
+     * The actual journey: server -> response body -> browser -> request body.
+     * Every Date becomes an ISO string on the way out, so the schema has to
+     * read them back as Dates or the restore writes strings into timestamp
+     * columns.
+     */
+    const overTheWire: unknown = JSON.parse(JSON.stringify(snapshot));
+    const parsed = applicationSnapshotSchema.parse(overTheWire);
+
+    expect(parsed.application.savedAt).toBeInstanceOf(Date);
+    expect(parsed.application.appliedAt?.toISOString()).toBe("2026-10-02T00:00:00.000Z");
+    expect(parsed.events[0]?.occurredAt).toBeInstanceOf(Date);
+    expect(parsed.contacts[0]?.createdAt).toBeInstanceOf(Date);
+  });
+
+  it("keeps a null date null instead of turning it into the epoch", () => {
+    /*
+     * The bug `nullableWireDate` exists for. A bare `z.coerce.date()` parses
+     * null as 1 January 1970, and an `appliedAt` of 1970 counts as a submitted
+     * application in every rate in §3 — a silently wrong number rather than a
+     * visible error.
+     */
+    const parsed = applicationSnapshotSchema.parse({
+      ...snapshot,
+      application: { ...snapshot.application, appliedAt: null, firstResponseAt: null },
+    });
+
+    expect(parsed.application.appliedAt).toBeNull();
+    expect(parsed.application.firstResponseAt).toBeNull();
+  });
+
+  it("rejects a date that is not a date", () => {
+    const result = applicationSnapshotSchema.safeParse({
+      ...snapshot,
+      application: { ...snapshot.application, savedAt: "whenever" },
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects an enum value outside the schema", () => {
+    expect(
+      applicationSnapshotSchema.safeParse({
+        ...snapshot,
+        application: { ...snapshot.application, status: "ARCHIVED" },
+      }).success,
+    ).toBe(false);
+
+    expect(
+      applicationSnapshotSchema.safeParse({
+        ...snapshot,
+        events: [{ ...snapshot.events[0], type: "DELETED" }],
+      }).success,
+    ).toBe(false);
+  });
+
+  it("carries no userId, so a forged snapshot cannot name an owner", () => {
+    // Identity comes from the session in `restoreApplication` (§4, rule 3).
+    // Anything extra in the body is dropped rather than written.
+    const parsed = applicationSnapshotSchema.parse({
+      ...snapshot,
+      application: { ...snapshot.application, userId: "someone-else" },
+    });
+
+    expect(parsed.application).not.toHaveProperty("userId");
+  });
+
+  it("refuses an unbounded child array", () => {
+    // These arrive from a browser; the cap is a request-size bound, not a
+    // product limit.
+    const many = Array.from({ length: 501 }, (_, index) => ({
+      ...snapshot.events[0],
+      id: `cl_event_${index}`,
+    }));
+
+    expect(applicationSnapshotSchema.safeParse({ ...snapshot, events: many }).success).toBe(false);
+  });
+
+  it("accepts an application with no children at all", () => {
+    const parsed = applicationSnapshotSchema.parse({ ...snapshot, events: [], contacts: [] });
+
+    expect(parsed.events).toEqual([]);
+    expect(parsed.contacts).toEqual([]);
+  });
+});
+
+describe("deletedApplicationSchema", () => {
+  it("is strict, unlike the create-response parsers", () => {
+    /*
+     * A snapshot that cannot be read means undo is not available, and the
+     * client has to know that so it can withhold the button rather than offer
+     * one that will fail.
+     */
+    expect(deletedApplicationSchema.safeParse({ data: { jobTitle: "x" } }).success).toBe(false);
+    expect(deletedApplicationSchema.safeParse(null).success).toBe(false);
   });
 });
