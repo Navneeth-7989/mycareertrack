@@ -21,6 +21,8 @@ import {
   createApplicationRequestSchema,
   createApplicationSchema,
   createdApplicationIdSchema,
+  toApplicationFormValues,
+  updateApplicationRequestSchema,
 } from "@/lib/validations/application";
 
 const minimal = { ...EMPTY_APPLICATION_FORM, companyName: "Google", jobTitle: "SDE Intern" };
@@ -416,5 +418,151 @@ describe("createdApplicationIdSchema", () => {
     for (const body of [null, {}, { data: {} }, { data: { id: "" } }, "<html>", 42]) {
       expect(createdApplicationIdSchema.parse(body)).toBeNull();
     }
+  });
+});
+
+/**
+ * The edit endpoint's schema. Everything it shares with create is already
+ * covered above — these are the differences, and the first one is the whole
+ * reason it exists as a separate schema.
+ */
+describe("updateApplicationRequestSchema", () => {
+  const minimalEdit = { companyName: "Google", jobTitle: "SDE Intern" };
+
+  it("cannot express a status at all", () => {
+    /*
+     * Not "ignores it" — `.omit()` removes the key, so a status arriving in the
+     * body is dropped rather than applied. Changing status writes a timeline
+     * event and maintains appliedAt/firstResponseAt in one transaction, and a
+     * field edit must never be a second route to that column.
+     */
+    const result = updateApplicationRequestSchema.parse({
+      ...minimalEdit,
+      status: "OFFER",
+    });
+
+    expect(result).not.toHaveProperty("status");
+  });
+
+  it("keeps every other field the create schema has", () => {
+    const result = updateApplicationRequestSchema.parse({
+      ...minimalEdit,
+      location: "Bengaluru",
+      salaryMin: "1200000",
+      deadline: "2026-12-01",
+      recruiterEmail: "priya@google.com",
+    });
+
+    expect(result.location).toBe("Bengaluru");
+    expect(result.salaryMin).toBe(1200000);
+    expect(result.deadline).toEqual(new Date("2026-12-01T00:00:00.000Z"));
+    expect(result.recruiterEmail).toBe("priya@google.com");
+  });
+
+  it("applies the same cross-field rules as create", () => {
+    // The point of extracting `applicationCrossFieldRules`: one definition, so
+    // the two schemas cannot disagree about what is valid.
+    const result = updateApplicationRequestSchema.safeParse({
+      ...minimalEdit,
+      salaryMin: "900000",
+      salaryMax: "600000",
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0]?.path).toEqual(["salaryMax"]);
+  });
+
+  it("defaults the acknowledgement to false", () => {
+    // A client that has never heard of the flag gets the confirmation rather
+    // than silently bypassing it.
+    expect(updateApplicationRequestSchema.parse(minimalEdit).acknowledgeDuplicate).toBe(false);
+  });
+});
+
+describe("toApplicationFormValues", () => {
+  const stored = {
+    companyName: "Google",
+    jobTitle: "SDE Intern",
+    jobUrl: null,
+    location: null,
+    workMode: null,
+    employmentType: null,
+    salaryMin: null,
+    salaryMax: null,
+    currency: "INR",
+    status: "APPLIED",
+    priority: "HIGH",
+    source: null,
+    appliedAt: null,
+    deadline: null,
+    jobDescription: null,
+    recruiter: null,
+  } as const;
+
+  it("turns every null into an empty string, never undefined", () => {
+    // The form's inputs are controlled; undefined would make them uncontrolled
+    // and React would warn the first time the user typed.
+    const values = toApplicationFormValues({ ...stored });
+
+    for (const [key, value] of Object.entries(values)) {
+      expect(typeof value, key).toBe("string");
+    }
+  });
+
+  it("round-trips through the schema it feeds", () => {
+    /*
+     * The real contract: whatever this produces, the form's resolver must
+     * accept. A mapper that emitted a number for salary or a Date for a
+     * deadline would fail validation on a form the user had not touched.
+     */
+    const values = toApplicationFormValues({
+      ...stored,
+      jobUrl: "https://careers.google.com/jobs/1",
+      location: "Bengaluru",
+      workMode: "HYBRID",
+      employmentType: "FULL_TIME",
+      salaryMin: 1200000,
+      salaryMax: 1800000,
+      source: "LINKEDIN",
+      appliedAt: new Date("2026-10-02T00:00:00.000Z"),
+      deadline: new Date("2026-12-01T00:00:00.000Z"),
+      jobDescription: "Build things.",
+      recruiter: { name: "Priya", role: "Recruiter", email: "p@g.com", phone: "+91 98765 43210" },
+    });
+
+    const parsed = createApplicationSchema.parse(values);
+
+    expect(parsed.salaryMin).toBe(1200000);
+    expect(parsed.workMode).toBe("HYBRID");
+    expect(parsed.deadline).toEqual(new Date("2026-12-01T00:00:00.000Z"));
+    expect(parsed.recruiterEmail).toBe("p@g.com");
+  });
+
+  it("reads dates back on the day they were stored", () => {
+    // UTC on the way out, matching how they went in. Reading in local time
+    // would show the 30th in the input for a value stored as the 1st.
+    const values = toApplicationFormValues({
+      ...stored,
+      deadline: new Date("2026-12-01T00:00:00.000Z"),
+    });
+
+    expect(values.deadline).toBe("2026-12-01");
+  });
+
+  it("falls back to the column default for a currency the form cannot show", () => {
+    // A row holding something outside CURRENCIES would otherwise select nothing
+    // and submit as invalid, with no way for the user to see why.
+    expect(toApplicationFormValues({ ...stored, currency: "XYZ" }).currency).toBe("INR");
+    expect(toApplicationFormValues({ ...stored, currency: null }).currency).toBe("INR");
+  });
+
+  it("prefers the per-application role over the contact's own", () => {
+    const values = toApplicationFormValues({
+      ...stored,
+      recruiter: { name: "Priya", role: "Referrer", email: "p@g.com", phone: null },
+    });
+
+    expect(values.recruiterRole).toBe("Referrer");
+    expect(values.recruiterPhone).toBe("");
   });
 });

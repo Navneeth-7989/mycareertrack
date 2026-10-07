@@ -6,6 +6,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { Controller, useForm, useWatch } from "react-hook-form";
 
 import { CompanyCombobox } from "@/components/applications/company-combobox";
+import { StatusBadge } from "@/components/applications/status-badge";
 import { EnumSelect, enumOptions } from "@/components/form/enum-select";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
@@ -50,19 +51,32 @@ import {
 } from "@/lib/validations/application";
 
 /**
- * The application create form (DESIGN.md §7, Phase 2).
+ * The application form — create and edit both (DESIGN.md §7, Phase 2).
  *
- * Only company and job title are required, which is the whole design of this
- * screen: §1 names "saving a posting you found 30 seconds ago" as the most
- * common action in the product, so the two fields that identify it come first
- * and everything else can be ignored. The sections below them are ordered by
- * how likely they are to be filled in, not by how the database is shaped.
+ * One component for two screens, because they are the same twenty fields with
+ * the same validation and the same layout. A second copy would be a second place
+ * for the salary rules, the recruiter block and the duplicate dialog to drift,
+ * and the first thing to go stale would be the one nobody is looking at.
+ *
+ * Passing `application` is what makes it an edit. Three things change, and only
+ * three: the values it starts from, where it posts, and the fact that **status
+ * becomes read-only** — a field edit must never be a second route to a column
+ * whose change writes a timeline event and maintains `appliedAt` and
+ * `firstResponseAt` in one transaction. Everything else is identical, which is
+ * the point.
+ *
+ * Only company and job title are required, which is the whole design of the
+ * create screen: §1 names "saving a posting you found 30 seconds ago" as the
+ * most common action in the product, so the two fields that identify it come
+ * first and everything else can be ignored. The sections below them are ordered
+ * by how likely they are to be filled in, not by how the database is shaped.
  *
  * A near-identical application does not save on the first click. The server
  * answers 409 without writing anything, and the dialog at the bottom of this
  * file asks before the same request is re-sent with `acknowledgeDuplicate`.
- * Confirming is a second POST, not a resumed one — there is no pending state
- * anywhere to go stale if the dialog is abandoned.
+ * Confirming is a second request, not a resumed one — there is no pending state
+ * anywhere to go stale if the dialog is abandoned. On edit the question is only
+ * ever asked when the edit *changed* the company or the title into a collision.
  *
  * It posts **raw form values** — `getValues()`, not the parsed payload
  * `handleSubmit` provides. The schema's input side is all strings and the API
@@ -91,9 +105,30 @@ function isFieldName(value: string): value is FieldName {
   return (FIELD_NAMES as string[]).includes(value);
 }
 
-export function ApplicationForm() {
+/**
+ * What the edit page passes. Its presence is what puts the form in edit mode —
+ * one optional prop rather than a `mode` flag plus three fields that only mean
+ * anything when it is set, which the compiler cannot police.
+ */
+export type ApplicationToEdit = {
+  id: string;
+  /** Every field, as strings — see `toApplicationFormValues`. */
+  values: Required<ApplicationFormValues>;
+  /**
+   * How many *other* applications share the linked contact.
+   *
+   * Zero when there is no contact or it belongs to this application alone. Any
+   * higher and the recruiter block says so before the user edits a record those
+   * other applications also read.
+   */
+  otherApplicationsForContact: number;
+};
+
+export function ApplicationForm({ application }: { application?: ApplicationToEdit }) {
   const router = useRouter();
   const [formError, setFormError] = useState<string | null>(null);
+
+  const isEdit = application !== undefined;
 
   /**
    * True from the moment the save succeeds until the browser has left the page.
@@ -131,9 +166,19 @@ export function ApplicationForm() {
     setError,
     formState: { errors, isSubmitting },
   } = useForm<ApplicationFormValues, unknown, ApplicationFormPayload>({
+    /*
+     * `createApplicationSchema` in both modes, including the `status` field the
+     * edit form never renders and never sends.
+     *
+     * That is not an oversight. The edit form still *holds* the stored status,
+     * because it is what decides whether "date applied" belongs on screen — and
+     * validating a value that came straight out of the database costs nothing
+     * and can never fail. The alternative, a second resolver schema, would mean
+     * two schemas to keep in step for one field that is read-only here anyway.
+     */
     resolver: zodResolver(createApplicationSchema),
     mode: "onTouched",
-    defaultValues: EMPTY_APPLICATION_FORM,
+    defaultValues: application?.values ?? EMPTY_APPLICATION_FORM,
   });
 
   const status = (useWatch({ control, name: "status" }) ??
@@ -143,6 +188,10 @@ export function ApplicationForm() {
   // it would invite the contradiction the mutation would then have to resolve:
   // not applied, but applied on the 3rd. Hidden rather than disabled, because a
   // disabled field is indistinguishable from a broken one.
+  //
+  // On edit the same rule applies to the *stored* status, since this form has no
+  // way to change it — so a saved role shows no date field, and the mutation
+  // forces the column to null regardless of what arrives.
   const showAppliedAt = isSubmittedStatus(status);
 
   /**
@@ -156,11 +205,32 @@ export function ApplicationForm() {
   async function save(acknowledgeDuplicate: boolean) {
     setFormError(null);
 
-    const response = await fetch("/api/applications", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...getValues(), acknowledgeDuplicate }),
-    });
+    const values = getValues();
+
+    /*
+     * `status` is dropped on edit, and the omission is the contract rather than
+     * a tidy-up: `updateApplicationRequestSchema` has no such field, so sending
+     * it would be sending something the endpoint cannot accept. Status moves
+     * through its own endpoint, which writes a timeline event and maintains two
+     * derived columns — none of which a field edit may skip.
+     *
+     * Set to `undefined` rather than destructured away, because `JSON.stringify`
+     * omits undefined properties entirely: the key never reaches the wire, and
+     * the line says which field is being withheld instead of leaving a discarded
+     * binding for a reader to work out.
+     */
+    const response = await fetch(
+      application ? `/api/applications/${application.id}` : "/api/applications",
+      {
+        method: application ? "PATCH" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...values,
+          ...(application ? { status: undefined } : {}),
+          acknowledgeDuplicate,
+        }),
+      },
+    );
 
     if (!response.ok) {
       const { code, message, fields, confirmation } = await readApiError(response);
@@ -191,11 +261,10 @@ export function ApplicationForm() {
     }
 
     const body: unknown = await response.json().catch(() => null);
-    const values = getValues();
 
     toast.add({
       type: "success",
-      title: "Application saved",
+      title: application ? "Changes saved" : "Application saved",
       description: `${values.jobTitle} at ${values.companyName}`,
     });
 
@@ -208,8 +277,14 @@ export function ApplicationForm() {
      * What does still surface is the info level: another role at the same
      * company, which never reached a dialog. The toast stack lives outside the
      * page, so these survive the navigation below.
+     *
+     * Create only. An edit returns no advisories at all: `updateApplication`
+     * runs the check solely to decide whether to *ask*, and only when the edit
+     * changed the company or the title. "You have 3 other applications at
+     * Google" is news the first time an application is logged and noise every
+     * time one is corrected afterwards.
      */
-    if (!acknowledgeDuplicate) {
+    if (!acknowledgeDuplicate && !application) {
       for (const warning of applicationWarningsSchema.parse(body)) {
         toast.add({
           type: "info",
@@ -220,6 +295,20 @@ export function ApplicationForm() {
     }
 
     setIsLeaving(true);
+
+    if (application) {
+      /*
+       * Back to the application that was just edited. `refresh()` first,
+       * because the detail page is a Server Component rendered from a cached
+       * payload — navigating alone would land on the version that was fetched
+       * before this save and show the user their old values as the confirmation
+       * that their new ones were stored.
+       */
+      router.refresh();
+      router.push(`/applications/${application.id}`);
+
+      return;
+    }
 
     /*
      * To the application that was just created, which is where the next thing
@@ -397,7 +486,9 @@ export function ApplicationForm() {
         <CardHeader>
           <CardTitle className="text-lg">Where it stands</CardTitle>
           <CardDescription>
-            The status drives the board, the pipeline and every rate on the analytics page.
+            {isEdit
+              ? "Status moves from the application page, so that every change is recorded on the timeline."
+              : "The status drives the board, the pipeline and every rate on the analytics page."}
           </CardDescription>
         </CardHeader>
 
@@ -407,20 +498,36 @@ export function ApplicationForm() {
               <Field>
                 <FieldLabel htmlFor="status">Status</FieldLabel>
 
-                <Controller
-                  control={control}
-                  name="status"
-                  render={({ field }) => (
-                    <EnumSelect
-                      id="status"
-                      value={field.value ?? "SAVED"}
-                      onValueChange={field.onChange}
-                      onBlur={field.onBlur}
-                      options={STATUS_OPTIONS}
-                      disabled={busy}
-                    />
-                  )}
-                />
+                {/*
+                 * Read-only on edit, and shown rather than hidden. Status is the
+                 * most consequential thing about an application, so a form that
+                 * simply omitted it would read as though editing had lost it —
+                 * and the user would go looking. The badge answers "what is it"
+                 * and the line beneath answers "then where do I change it",
+                 * which is the pill on the detail page: the one control that
+                 * writes a timeline event and maintains `appliedAt` and
+                 * `firstResponseAt` in the same transaction.
+                 */}
+                {isEdit ? (
+                  <div className="flex h-10 items-center">
+                    <StatusBadge status={status} />
+                  </div>
+                ) : (
+                  <Controller
+                    control={control}
+                    name="status"
+                    render={({ field }) => (
+                      <EnumSelect
+                        id="status"
+                        value={field.value ?? "SAVED"}
+                        onValueChange={field.onChange}
+                        onBlur={field.onBlur}
+                        options={STATUS_OPTIONS}
+                        disabled={busy}
+                      />
+                    )}
+                  />
+                )}
               </Field>
 
               <Field>
@@ -479,7 +586,16 @@ export function ApplicationForm() {
                   />
 
                   <FieldDescription id="appliedAt-hint">
-                    Left blank, today is used.
+                    {/*
+                     * Different promises, because the mutations genuinely
+                     * differ. On create a blank date means "today". On edit it
+                     * cannot mean null — the §3 invariant ties `appliedAt` to a
+                     * submitted status, and this form cannot change status — so
+                     * `nextAppliedAt` keeps what is stored.
+                     */}
+                    {isEdit
+                      ? "Left blank, the current date is kept."
+                      : "Left blank, today is used."}
                   </FieldDescription>
 
                   <FieldError id="appliedAt-error" errors={[errors.appliedAt]} />
@@ -594,13 +710,36 @@ export function ApplicationForm() {
         <CardHeader>
           <CardTitle className="text-lg">Recruiter or contact</CardTitle>
           <CardDescription>
-            An email or a phone number saves this person to your contacts and links them to this
-            application. A name on its own is not enough to reach anyone, so it saves nothing.
+            {isEdit
+              ? "Clearing both the email and the phone unlinks this person from the application. Their contact record is kept."
+              : "An email or a phone number saves this person to your contacts and links them to this application. A name on its own is not enough to reach anyone, so it saves nothing."}
           </CardDescription>
         </CardHeader>
 
         <CardContent>
           <FieldGroup>
+            {/*
+             * Shown before the inputs, not after, because it changes what the
+             * user is about to do. A `Contact` is one row that several
+             * applications point at, so editing it here reaches all of them —
+             * which is the cost of being able to edit it at all, and is the kind
+             * of thing someone should learn before they type rather than from a
+             * toast afterwards.
+             */}
+            {application && application.otherApplicationsForContact > 0 ? (
+              <Alert>
+                <AlertDescription>
+                  This person is also linked to{" "}
+                  <strong className="font-medium">
+                    {application.otherApplicationsForContact === 1
+                      ? "one other application"
+                      : `${application.otherApplicationsForContact} other applications`}
+                  </strong>
+                  . Changing their name, email or phone here updates the contact everywhere.
+                </AlertDescription>
+              </Alert>
+            ) : null}
+
             <div className="grid gap-5 sm:grid-cols-2">
               <Field data-invalid={!!errors.recruiterName}>
                 <FieldLabel htmlFor="recruiterName">Name</FieldLabel>
@@ -689,7 +828,10 @@ export function ApplicationForm() {
         <ButtonLink
           variant="ghost"
           size="lg"
-          href="/applications"
+          // Back where the user came from: the application being edited, or the
+          // list. Cancelling into a different screen than the one you opened the
+          // form from reads as having been moved rather than having gone back.
+          href={application ? `/applications/${application.id}` : "/applications"}
           aria-disabled={busy || undefined}
           className={busy ? "pointer-events-none opacity-50" : undefined}
         >
@@ -697,7 +839,7 @@ export function ApplicationForm() {
         </ButtonLink>
 
         <Button type="submit" size="lg" disabled={busy}>
-          {busy ? "Saving…" : "Save application"}
+          {busy ? "Saving…" : isEdit ? "Save changes" : "Save application"}
         </Button>
       </div>
 
@@ -716,11 +858,17 @@ export function ApplicationForm() {
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>You may have already applied to this</AlertDialogTitle>
+            <AlertDialogTitle>
+              {isEdit
+                ? "This now matches another application"
+                : "You may have already applied to this"}
+            </AlertDialogTitle>
 
             <AlertDialogDescription>
-              {duplicateQuestion}. Nothing has been saved yet — save it anyway if this is a separate
-              application.
+              {duplicateQuestion}.{" "}
+              {isEdit
+                ? "Nothing has been changed yet — save anyway if these really are two separate applications."
+                : "Nothing has been saved yet — save it anyway if this is a separate application."}
             </AlertDialogDescription>
           </AlertDialogHeader>
 

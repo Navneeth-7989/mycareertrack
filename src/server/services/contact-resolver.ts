@@ -167,3 +167,114 @@ function isPlaceholderName(existing: {
 }): boolean {
   return existing.name === existing.email || existing.name === existing.phone;
 }
+
+/**
+ * The edit form's half of the same job: reconcile the recruiter block against
+ * whatever contact this application is already linked to.
+ *
+ * **This one overwrites, and `resolveAndLinkRecruiter` deliberately does not.**
+ * The difference is intent, not inconsistency. On create the fields are a side
+ * effect of logging an application, so a typo must not rewrite a contact a dozen
+ * other applications share — hence `backfill`, which only fills blanks. On the
+ * edit form the user has opened a contact's details, seen them in the inputs and
+ * changed them, which is an explicit act. Silently refusing that edit would be
+ * worse than performing it, so the page warns when the contact is shared and
+ * then does what it was told.
+ *
+ * Four cases, in the order they are decided:
+ *
+ * 1. **Nothing to reach them by** — no email and no phone. §8's rule that a bare
+ *    name is not a contact applies on the way out as well as in, so any existing
+ *    link is removed. The `Contact` row survives: it may belong to other
+ *    applications, and deleting someone's record because one application stopped
+ *    referring to them is not an edit, it is data loss.
+ * 2. **No contact linked yet** — the create path, unchanged.
+ * 3. **The email now names a different contact** — the link moves. Matching by
+ *    email is the identity rule everywhere else here, so typing a colleague's
+ *    address means "it was actually them", not "rename this person".
+ * 4. **Otherwise** — update the linked contact in place.
+ */
+export async function syncRecruiterLink(
+  userId: string,
+  applicationId: string,
+  input: RecruiterInput,
+  linkedContactId: string | null,
+  client: ContactClient = prisma,
+): Promise<LinkedContact | null> {
+  if (!input.email && !input.phone) {
+    if (linkedContactId) {
+      await client.applicationContact.delete({
+        where: { applicationId_contactId: { applicationId, contactId: linkedContactId } },
+      });
+    }
+
+    return null;
+  }
+
+  if (!linkedContactId) {
+    return resolveAndLinkRecruiter(userId, applicationId, input, client);
+  }
+
+  /*
+   * Scoped by `userId`, not just by id. The id arrives from the application's
+   * own join row so it is already this user's, but the rule in §4 is that
+   * ownership lives in the WHERE clause rather than in an argument someone
+   * trusted — and this is a write.
+   */
+  const linked = await client.contact.findFirst({
+    where: { id: linkedContactId, userId },
+    select: { id: true, name: true, email: true, phone: true },
+  });
+
+  if (!linked) {
+    // The contact was deleted between the page load and the save. Treat it as
+    // "none linked" rather than failing the whole edit over a stale reference.
+    return resolveAndLinkRecruiter(userId, applicationId, input, client);
+  }
+
+  if (input.email && input.email !== linked.email) {
+    const other = await client.contact.findFirst({
+      where: { userId, email: input.email, id: { not: linked.id } },
+      select: { id: true, name: true },
+    });
+
+    if (other) {
+      // Move the link rather than rewriting either record. Re-pointed in two
+      // steps because the join's primary key is the pair, so there is no row to
+      // update — only one to drop and one to add.
+      await client.applicationContact.delete({
+        where: { applicationId_contactId: { applicationId, contactId: linked.id } },
+      });
+
+      await client.applicationContact.create({
+        data: { applicationId, contactId: other.id, role: input.role },
+      });
+
+      return { ...other, created: false };
+    }
+  }
+
+  const contact = await client.contact.update({
+    where: { id: linked.id },
+    data: {
+      // `contactName` rather than the raw value: clearing the name on a contact
+      // identified by its address should fall back to that address, never to an
+      // empty string in a non-null column.
+      name: contactName(input),
+      email: input.email,
+      phone: input.phone,
+      role: input.role,
+    },
+    select: { id: true, name: true },
+  });
+
+  // The role on the join is this person's role *on this application* (§3), and
+  // it is a different column from the one just written — the same recruiter can
+  // be the referrer here and the hiring manager elsewhere.
+  await client.applicationContact.update({
+    where: { applicationId_contactId: { applicationId, contactId: contact.id } },
+    data: { role: input.role },
+  });
+
+  return { ...contact, created: false };
+}

@@ -6,9 +6,14 @@ import {
   CURRENCIES,
   EMPLOYMENT_TYPES,
   PRIORITIES,
+  type ApplicationSourceValue,
+  type ApplicationStatusValue,
+  type CurrencyValue,
+  type EmploymentTypeValue,
+  type PriorityValue,
 } from "@/lib/constants/application";
-import { WORK_MODES } from "@/lib/constants/work-mode";
-import { isDateOnlyString, parseDateOnly } from "@/lib/utils/date-only";
+import { WORK_MODES, type WorkModeValue } from "@/lib/constants/work-mode";
+import { isDateOnlyString, parseDateOnly, toDateInputValue } from "@/lib/utils/date-only";
 import { companyNameSchema } from "@/lib/validations/company";
 import { optionalUrl } from "@/lib/validations/url";
 
@@ -250,6 +255,37 @@ export const createApplicationRequestSchema = applicationObject
   })
   .superRefine(applicationCrossFieldRules);
 
+/**
+ * What `PATCH /api/applications/:id` accepts: every editable field, plus the
+ * same duplicate acknowledgement the create endpoint takes.
+ *
+ * **`status` is omitted, and that is the whole shape of this schema.** It has
+ * its own endpoint because changing it writes a timeline event and maintains
+ * `appliedAt` and `firstResponseAt` in one transaction (see `updateStatusSchema`
+ * above). Accepting it here would give the client a second route to the same
+ * column that skips all of that — so the field is not merely ignored by the
+ * mutation, it cannot be expressed in the request at all.
+ *
+ * Everything else is the create schema unchanged, down to the cross-field rules,
+ * which is why `applicationCrossFieldRules` was extracted in the first place. A
+ * second copy of "max salary cannot be below min" is a second copy that drifts.
+ */
+export const updateApplicationRequestSchema = applicationObject
+  .omit({ status: true })
+  .extend({
+    /**
+     * "I know this now looks like another application — save it anyway."
+     *
+     * Only ever asked when this edit *changed* the company or the job title
+     * into something that collides. See `updateApplication`.
+     */
+    acknowledgeDuplicate: z.boolean().optional().default(false),
+  })
+  .superRefine(applicationCrossFieldRules);
+
+/** What the update mutation receives: numbers, Dates, nulls, and the flag. */
+export type UpdateApplicationPayload = z.output<typeof updateApplicationRequestSchema>;
+
 /** What the form holds: every field a string, as inputs produce. */
 export type ApplicationFormValues = z.input<typeof createApplicationSchema>;
 
@@ -294,6 +330,90 @@ export const EMPTY_APPLICATION_FORM: Required<ApplicationFormValues> = {
   recruiterEmail: "",
   recruiterPhone: "",
 };
+
+/**
+ * A stored application, in the shape `toApplicationFormValues` needs.
+ *
+ * Spelled out rather than imported from Prisma, for the §4 rule that keeps
+ * Prisma inside `src/server/`. The structural match is checked by the compiler
+ * at the one call site, which is the edit page.
+ */
+export type ApplicationFormSource = {
+  companyName: string;
+  jobTitle: string;
+  jobUrl: string | null;
+  location: string | null;
+  workMode: WorkModeValue | null;
+  employmentType: EmploymentTypeValue | null;
+  salaryMin: number | null;
+  salaryMax: number | null;
+  currency: string | null;
+  status: ApplicationStatusValue;
+  priority: PriorityValue;
+  source: ApplicationSourceValue | null;
+  appliedAt: Date | null;
+  deadline: Date | null;
+  jobDescription: string | null;
+  /** The contact the recruiter block edits, or null when none is linked. */
+  recruiter: {
+    name: string | null;
+    role: string | null;
+    email: string | null;
+    phone: string | null;
+  } | null;
+};
+
+/**
+ * A stored application → the form's starting values.
+ *
+ * The inverse of what the schema does on submit, and it has to be exact: the
+ * form's input side is all strings (see the header), so every null becomes `""`
+ * and every number and date becomes the text its input expects. Returning
+ * `Required<ApplicationFormValues>` is what makes that the compiler's problem —
+ * add a field to the schema and this fails to build until it is mapped, the same
+ * guarantee `EMPTY_APPLICATION_FORM` gives the create page.
+ *
+ * Dates go through `toDateInputValue`, which reads them back in UTC — the other
+ * half of the date-only convention. Formatting a deadline in local time here
+ * would show the 13th in the input for a value stored as the 14th, and saving
+ * would then quietly move it.
+ */
+export function toApplicationFormValues(
+  source: ApplicationFormSource,
+): Required<ApplicationFormValues> {
+  return {
+    companyName: source.companyName,
+    jobTitle: source.jobTitle,
+    jobUrl: source.jobUrl ?? "",
+    location: source.location ?? "",
+    workMode: source.workMode ?? "",
+    employmentType: source.employmentType ?? "",
+    salaryMin: source.salaryMin === null ? "" : String(source.salaryMin),
+    salaryMax: source.salaryMax === null ? "" : String(source.salaryMax),
+    /*
+     * The column is nullable text with an `INR` default, while the form offers a
+     * fixed list. A row holding anything outside that list — from a seed, a
+     * backup, or a future currency added and then removed — would select nothing
+     * and submit as invalid, so it falls back to the column default rather than
+     * rendering an empty control the user cannot fix.
+     */
+    currency: isOfferedCurrency(source.currency) ? source.currency : "INR",
+    status: source.status,
+    priority: source.priority,
+    source: source.source ?? "",
+    appliedAt: toDateInputValue(source.appliedAt),
+    deadline: toDateInputValue(source.deadline),
+    jobDescription: source.jobDescription ?? "",
+    recruiterName: source.recruiter?.name ?? "",
+    recruiterRole: source.recruiter?.role ?? "",
+    recruiterEmail: source.recruiter?.email ?? "",
+    recruiterPhone: source.recruiter?.phone ?? "",
+  };
+}
+
+function isOfferedCurrency(value: string | null): value is CurrencyValue {
+  return value !== null && (CURRENCIES as readonly string[]).includes(value);
+}
 
 /**
  * `PATCH /api/applications/:id/status` — the board's and the detail page's

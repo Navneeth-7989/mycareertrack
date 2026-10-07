@@ -33,13 +33,30 @@ const CANDIDATE_LIMIT = 20;
 
 export async function findDuplicateWarning(
   userId: string,
-  input: { companyId: string; companyName: string; jobTitle: string },
+  input: {
+    companyId: string;
+    companyName: string;
+    jobTitle: string;
+    /**
+     * The application being edited, which must not warn about itself.
+     *
+     * Absent on create, where there is no row yet. On edit it is essential and
+     * not merely tidy: an edit that leaves the company and title alone would
+     * otherwise match itself every time and stop every save with a dialog
+     * asking whether the user meant to duplicate the thing they are editing.
+     */
+    excludeId?: string;
+  },
   client: ApplicationClient = prisma,
 ): Promise<ApplicationWarning | null> {
   // userId in the WHERE clause of both, as everywhere (§4). Without it this
   // would happily tell one user about another user's applications at the same
   // company — a data leak dressed up as a helpful warning.
-  const where = { userId, companyId: input.companyId };
+  const where = {
+    userId,
+    companyId: input.companyId,
+    ...(input.excludeId ? { id: { not: input.excludeId } } : {}),
+  };
 
   const candidates = await client.application.findMany({
     where,

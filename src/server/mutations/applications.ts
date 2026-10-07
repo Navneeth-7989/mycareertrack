@@ -7,11 +7,19 @@ import {
   isSubmittedStatus,
   type ApplicationStatusValue,
 } from "@/lib/constants/application";
-import type { ApplicationWarning, CreateApplicationPayload } from "@/lib/validations/application";
+import type {
+  ApplicationWarning,
+  CreateApplicationPayload,
+  UpdateApplicationPayload,
+} from "@/lib/validations/application";
 
 import { TRANSACTION_OPTIONS, prisma } from "../db";
 import { resolveCompanyByName } from "../services/company-resolver";
-import { resolveAndLinkRecruiter, type LinkedContact } from "../services/contact-resolver";
+import {
+  resolveAndLinkRecruiter,
+  syncRecruiterLink,
+  type LinkedContact,
+} from "../services/contact-resolver";
 import { findDuplicateWarning } from "../services/duplicate-check";
 
 /**
@@ -250,6 +258,174 @@ async function attemptStatusChange(
 
     return { ...result, status, changed: true };
   }, TRANSACTION_OPTIONS);
+}
+
+export type UpdatedApplication = {
+  id: string;
+  jobTitle: string;
+  companyName: string;
+  /** Non-null when the recruiter block produced, matched or kept a contact. */
+  contact: LinkedContact | null;
+};
+
+/**
+ * Edits an application's own fields (DESIGN.md §6, `PATCH /api/applications/:id`).
+ *
+ * **Status is not among them**, and cannot be: `updateApplicationRequestSchema`
+ * omits it, so there is no way to express it in the request. Changing status
+ * writes a timeline event and maintains two derived columns in one transaction,
+ * and a field edit that skipped all of that would corrupt exactly the history
+ * `updateApplicationStatus` exists to protect. The pill on the detail page is
+ * the control.
+ *
+ * No timeline event is written here either, and that is deliberate rather than
+ * an omission. `EventType` has no "edited" member because the timeline is a
+ * record of what happened in the *search* — applied, screened, interviewed — not
+ * an audit log of form submissions. Correcting a salary range you mistyped is
+ * not a thing that happened to the application.
+ *
+ * One transaction, for the same reason as `createApplication`: resolving a
+ * company, moving a contact link and writing the row either all happen or none
+ * do. A rolled-back edit that had already created a `Company` would leave a
+ * row nothing points at.
+ */
+export async function updateApplication(
+  userId: string,
+  applicationId: string,
+  payload: UpdateApplicationPayload,
+): Promise<UpdatedApplication> {
+  return prisma.$transaction(async (tx) => {
+    // Ownership in the WHERE clause (§4); null becomes a 404, never a 403 (§6).
+    const existing = await tx.application.findFirst({
+      where: { id: applicationId, userId },
+      select: {
+        id: true,
+        companyId: true,
+        jobTitle: true,
+        status: true,
+        appliedAt: true,
+        contacts: {
+          select: { contactId: true },
+          orderBy: { createdAt: "asc" },
+          take: 1,
+        },
+      },
+    });
+
+    if (!existing) {
+      throw new NotFoundError("Application not found");
+    }
+
+    const company = await resolveCompanyByName(userId, { name: payload.companyName }, tx);
+
+    /*
+     * The duplicate question is asked only when this edit actually moved the
+     * application onto another one — a changed company, or a changed title.
+     *
+     * Checking unconditionally would be the obvious implementation and a bad
+     * one: an application that already shares a company and a similar title with
+     * another is a duplicate the user has *already* confirmed once, so every
+     * later edit to its salary or its notes would stop and re-ask a question
+     * that was settled. A dialog that appears on saves it has no business
+     * interrupting is a dialog people learn to dismiss without reading.
+     */
+    const identityChanged =
+      company.id !== existing.companyId || payload.jobTitle !== existing.jobTitle;
+
+    const warning = identityChanged
+      ? await findDuplicateWarning(
+          userId,
+          {
+            companyId: company.id,
+            companyName: company.name,
+            jobTitle: payload.jobTitle,
+            // Without this the application matches itself and no edit ever saves.
+            excludeId: existing.id,
+          },
+          tx,
+        )
+      : null;
+
+    if (warning?.level === "warning" && !payload.acknowledgeDuplicate) {
+      // Thrown inside the transaction, so nothing is written — including any
+      // `Company` just created for a name the user may now abandon.
+      throw new ConfirmationRequiredError({
+        reason: warning.code,
+        message: warning.message,
+        relatedIds: warning.applicationIds,
+      });
+    }
+
+    const application = await tx.application.update({
+      where: { id: existing.id },
+      data: {
+        companyId: company.id,
+        jobTitle: payload.jobTitle,
+        jobUrl: payload.jobUrl,
+        location: payload.location,
+        workMode: payload.workMode,
+        employmentType: payload.employmentType,
+        salaryMin: payload.salaryMin,
+        salaryMax: payload.salaryMax,
+        currency: payload.currency,
+        priority: payload.priority,
+        source: payload.source,
+        deadline: payload.deadline,
+        jobDescription: payload.jobDescription,
+        appliedAt: nextAppliedAt(existing, payload.appliedAt),
+      },
+      select: { id: true, jobTitle: true },
+    });
+
+    const contact = await syncRecruiterLink(
+      userId,
+      existing.id,
+      {
+        name: payload.recruiterName,
+        role: payload.recruiterRole,
+        email: payload.recruiterEmail,
+        phone: payload.recruiterPhone,
+      },
+      existing.contacts[0]?.contactId ?? null,
+      tx,
+    );
+
+    return {
+      id: application.id,
+      jobTitle: application.jobTitle,
+      companyName: company.name,
+      contact,
+    };
+  }, TRANSACTION_OPTIONS);
+}
+
+/**
+ * What `appliedAt` becomes after an edit, given that this endpoint cannot change
+ * status.
+ *
+ * The invariant from §3 is `appliedAt IS NOT NULL ⟺ status is not SAVED`, and
+ * every rate in the analytics divides by it — so the status decides, not the
+ * form:
+ *
+ * - **SAVED** — null, whatever was submitted. The form does not render the field
+ *   for a saved role, so this discards nothing the user typed; it is here
+ *   because the endpoint must hold the invariant against any request, not only
+ *   against its own form.
+ * - **Submitted, with a date** — that date. This is the correction the field
+ *   exists for.
+ * - **Submitted, cleared** — the stored date survives. Null is not an option
+ *   without changing the status, and silently inventing today's date for an
+ *   application submitted last month would be worse than ignoring the blank.
+ */
+function nextAppliedAt(
+  existing: { status: ApplicationStatusValue; appliedAt: Date | null },
+  submitted: Date | null,
+): Date | null {
+  if (!isSubmittedStatus(existing.status)) {
+    return null;
+  }
+
+  return submitted ?? existing.appliedAt ?? new Date();
 }
 
 export async function createApplication(

@@ -228,6 +228,72 @@ export async function getApplication(
 }
 
 /**
+ * What the edit form needs, which is not what the detail page needs.
+ *
+ * A deliberately separate query rather than a reuse of `getApplication`. That
+ * one fetches the timeline and the full contact records to *display* them, and
+ * the edit form shows neither — while this one needs something the detail page
+ * has no use for: how many other applications share the linked contact, which
+ * is what lets the recruiter block warn before an edit reaches them all.
+ */
+const editSelect = {
+  id: true,
+  jobTitle: true,
+  jobUrl: true,
+  location: true,
+  workMode: true,
+  employmentType: true,
+  salaryMin: true,
+  salaryMax: true,
+  currency: true,
+  status: true,
+  priority: true,
+  source: true,
+  appliedAt: true,
+  deadline: true,
+  jobDescription: true,
+  company: { select: { id: true, name: true } },
+  contacts: {
+    select: {
+      role: true,
+      contact: {
+        select: {
+          id: true,
+          name: true,
+          role: true,
+          email: true,
+          phone: true,
+          // How many applications this person is attached to, this one
+          // included. The form subtracts one to say "3 other applications".
+          _count: { select: { applications: true } },
+        },
+      },
+    },
+    orderBy: { createdAt: "asc" },
+    /*
+     * One, because four inputs can only describe one person. Phase 3 allows
+     * several contacts per application, and the form will have to grow a real
+     * list then — until something can create a second link there is exactly one
+     * to edit, and taking the oldest makes which one deterministic rather than
+     * leaving it to row order.
+     */
+    take: 1,
+  },
+} satisfies Prisma.ApplicationSelect;
+
+export type ApplicationForEdit = Prisma.ApplicationGetPayload<{ select: typeof editSelect }>;
+
+export async function getApplicationForEdit(
+  userId: string,
+  applicationId: string,
+): Promise<ApplicationForEdit | null> {
+  return prisma.application.findFirst({
+    where: { id: applicationId, userId },
+    select: editSelect,
+  });
+}
+
+/**
  * The `WHERE` clause. Exported for the board in the next step, which applies
  * the same filters without the pagination.
  *

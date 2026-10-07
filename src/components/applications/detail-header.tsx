@@ -96,8 +96,6 @@ export function DetailHeader({ application }: { application: ApplicationDetail }
             </ButtonLink>
           ) : null}
 
-          {/* TODO(step-6): this 404s until the edit page lands, the same way
-              the rows in the table pointed here before this page existed. */}
           <ButtonLink variant="outline" href={`/applications/${application.id}/edit`}>
             <Pencil aria-hidden="true" data-icon="inline-start" />
             Edit
