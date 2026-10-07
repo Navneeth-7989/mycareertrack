@@ -14,11 +14,13 @@ import {
   isResponseStatus,
   isSubmittedStatus,
 } from "@/lib/constants/application";
+import { EVENT_TYPES, EVENT_TYPE_LABELS } from "@/lib/constants/event";
 import {
   EMPTY_APPLICATION_FORM,
   applicationWarningsSchema,
   createApplicationRequestSchema,
   createApplicationSchema,
+  createdApplicationIdSchema,
 } from "@/lib/validations/application";
 
 const minimal = { ...EMPTY_APPLICATION_FORM, companyName: "Google", jobTitle: "SDE Intern" };
@@ -370,6 +372,7 @@ describe("the constants match schema.prisma", () => {
     { name: "EmploymentType", values: EMPLOYMENT_TYPES },
     { name: "Priority", values: PRIORITIES },
     { name: "ApplicationSource", values: APPLICATION_SOURCES },
+    { name: "EventType", values: EVENT_TYPES },
   ])("$name", ({ name, values }) => {
     expect(enumValues(name)).toEqual([...values].sort());
   });
@@ -380,9 +383,38 @@ describe("the constants match schema.prisma", () => {
     { name: "employment types", values: EMPLOYMENT_TYPES, labels: EMPLOYMENT_TYPE_LABELS },
     { name: "priorities", values: PRIORITIES, labels: PRIORITY_LABELS },
     { name: "sources", values: APPLICATION_SOURCES, labels: APPLICATION_SOURCE_LABELS },
+    // The timeline's map has to be total, not just covering the two types
+    // written today: a hole would render `undefined` where an icon goes.
+    { name: "event types", values: EVENT_TYPES, labels: EVENT_TYPE_LABELS },
   ])("labels every value in $name", ({ values, labels }) => {
     const missing = values.filter((value) => !(labels as Record<string, string>)[value]);
 
     expect(missing).toEqual([]);
+  });
+});
+
+/**
+ * The create form reads the new id out of the response to redirect to its
+ * detail page. By the time this parser runs the row is already written, so the
+ * one thing it must never do is throw — a save that succeeded and then threw on
+ * its own response body would show the user an error for a saved application.
+ */
+describe("createdApplicationIdSchema", () => {
+  it("reads the id out of the wrapped success body", () => {
+    expect(createdApplicationIdSchema.parse({ data: { id: "cl123" } })).toBe("cl123");
+  });
+
+  it("ignores the rest of the body", () => {
+    // `warnings` sits beside `data` on a create (§6) and is read by a separate
+    // parser.
+    const body = { data: { id: "cl123", jobTitle: "SDE Intern" }, warnings: [] };
+
+    expect(createdApplicationIdSchema.parse(body)).toBe("cl123");
+  });
+
+  it("answers null rather than throwing on a body it cannot read", () => {
+    for (const body of [null, {}, { data: {} }, { data: { id: "" } }, "<html>", 42]) {
+      expect(createdApplicationIdSchema.parse(body)).toBeNull();
+    }
   });
 });

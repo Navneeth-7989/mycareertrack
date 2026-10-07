@@ -44,6 +44,7 @@ import {
   EMPTY_APPLICATION_FORM,
   applicationWarningsSchema,
   createApplicationSchema,
+  createdApplicationIdSchema,
   type ApplicationFormPayload,
   type ApplicationFormValues,
 } from "@/lib/validations/application";
@@ -221,16 +222,19 @@ export function ApplicationForm() {
     setIsLeaving(true);
 
     /*
-     * To the list, which now exists — and with no filters, because the default
-     * sort is newest first, so the application that was just saved is the top
-     * row. Landing on a filtered view that happens to exclude it would be the
-     * worst possible confirmation of a successful save.
+     * To the application that was just created, which is where the next thing
+     * the user wants to do already is: read it back, correct a field, move the
+     * status. It also confirms the save by showing the saved thing rather than
+     * by showing a list and asking the user to find it.
      *
-     * TODO(step-5): the detail page becomes the better destination once it
-     * exists, since the next thing a user does with a new application is add to
-     * it.
+     * The list is the fallback when the id cannot be read — unfiltered, because
+     * the default sort is newest first, so the new application is the top row.
+     * Landing on a filtered view that happens to exclude it would be the worst
+     * possible confirmation of a successful save.
      */
-    router.push("/applications");
+    const createdId = createdApplicationIdSchema.parse(body);
+
+    router.push(createdId ? `/applications/${createdId}` : "/applications");
   }
 
   const onSubmit = handleSubmit(() => save(false));

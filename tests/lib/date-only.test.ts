@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  daysSinceDateOnly,
   formatDateOnly,
   isDateOnlyString,
   parseDateOnly,
+  relativeDayLabel,
   toDateInputValue,
   todayAsDateOnly,
 } from "@/lib/utils/date-only";
@@ -93,5 +95,57 @@ describe("todayAsDateOnly", () => {
     const later = todayAsDateOnly(new Date(2026, 10, 5, 12));
 
     expect(earlier < later).toBe(true);
+  });
+});
+
+describe("daysSinceDateOnly", () => {
+  // "Now" is fixed so these never depend on the day the suite runs.
+  const now = new Date(2026, 9, 7, 12, 0, 0);
+
+  it("counts whole days from a stored value to today", () => {
+    expect(daysSinceDateOnly(parseDateOnly("2026-10-07"), now)).toBe(0);
+    expect(daysSinceDateOnly(parseDateOnly("2026-10-06"), now)).toBe(1);
+    expect(daysSinceDateOnly(parseDateOnly("2026-09-07"), now)).toBe(30);
+  });
+
+  it("goes negative for a date in the future", () => {
+    expect(daysSinceDateOnly(parseDateOnly("2026-10-10"), now)).toBe(-3);
+  });
+
+  it("ignores the clock time on the stored instant", () => {
+    /*
+     * The column holds a mix: a deadline is midnight UTC on a calendar day,
+     * while `appliedAt` set by the server is the actual instant. Both have to
+     * answer "how many days ago" with the same number, or an application
+     * created at 11pm would read as a day older than one created at 1am.
+     */
+    const lateUtc = new Date("2026-10-06T23:30:00.000Z");
+    const earlyUtc = new Date("2026-10-06T00:30:00.000Z");
+
+    expect(daysSinceDateOnly(lateUtc, now)).toBe(daysSinceDateOnly(earlyUtc, now));
+  });
+
+  it("stays exact across a month boundary", () => {
+    // The reduction to UTC midnight is what makes this whole rather than
+    // 30.958 — a raw millisecond subtraction would floor to the wrong day in a
+    // zone that changed offset in between.
+    expect(daysSinceDateOnly(parseDateOnly("2026-01-31"), new Date(2026, 1, 1, 12))).toBe(1);
+  });
+
+  it("answers zero rather than NaN for an invalid date", () => {
+    expect(daysSinceDateOnly(new Date("not a date"), now)).toBe(0);
+  });
+});
+
+describe("relativeDayLabel", () => {
+  it("names the three days that have names", () => {
+    expect(relativeDayLabel(0)).toBe("today");
+    expect(relativeDayLabel(1)).toBe("yesterday");
+    expect(relativeDayLabel(-1)).toBe("tomorrow");
+  });
+
+  it("counts in both directions", () => {
+    expect(relativeDayLabel(5)).toBe("5 days ago");
+    expect(relativeDayLabel(-5)).toBe("in 5 days");
   });
 });

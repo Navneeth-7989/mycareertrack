@@ -1,6 +1,6 @@
 import { EventType } from "@prisma/client";
 
-import { ConfirmationRequiredError, NotFoundError } from "@/lib/api/errors";
+import { ConfirmationRequiredError, ConflictError, NotFoundError } from "@/lib/api/errors";
 import {
   APPLICATION_STATUS_LABELS,
   isResponseStatus,
@@ -52,6 +52,26 @@ export type StatusChangeResult = {
 };
 
 /**
+ * How many times a status change re-reads and retries after losing a race.
+ *
+ * The budget is a pile-up depth, not a flakiness allowance, and that is what
+ * sets the number. Contending writes queue on the row lock and commit one at a
+ * time, so with N requests in flight against the same application the last one
+ * to get the lock has to lose, and retry, N-1 times. A budget below N therefore
+ * does not make the loser slower — it makes it fail.
+ *
+ * Measured rather than guessed: at three, firing five concurrent moves at one
+ * row left one or two of them exhausting the budget and returning a 409, with
+ * the stored data still perfectly consistent. Eight absorbs every pile-up a
+ * person can produce by hand, since each retry is one short transaction against
+ * a row only its owner can touch.
+ *
+ * It stays bounded. An unbounded loop here would turn a stuck lock into a
+ * request that never returns.
+ */
+const STATUS_WRITE_ATTEMPTS = 8;
+
+/**
  * Moves an application to a new status — the worked example in DESIGN.md §4.
  *
  * One transaction does three things, and the transaction is the point: a status
@@ -67,67 +87,135 @@ export type StatusChangeResult = {
  *   that stops matching the status is the day the analytics start lying.
  * - **`firstResponseAt`** is written once and never overwritten (§3), so a
  *   second reply does not reset the first — except by the regression below.
+ *
+ * **On the retry loop.** The read that decides all of the above has to happen
+ * inside the same transaction as the write, and the write has to be conditional
+ * on nothing having moved in between. The first version of this function read
+ * outside the transaction, and the bug was not theoretical: two changes 10ms
+ * apart both read `ASSESSMENT`, so the timeline ended up with "Moved to
+ * Screening · From Assessment" and "Moved to Applied · From Assessment" — one
+ * of which never happened, on a row that has no record of ever being in
+ * Screening.
+ *
+ * That matters more than it looks. §3 computes "ever reached INTERVIEW" and
+ * "ever reached OFFER" from `ApplicationEvent` rather than from the current
+ * status — the event log *is* the analytics input, and it is append-only, so a
+ * fabricated entry is permanent. The same race can also split a derived column
+ * off from the log: race APPLIED against SCREENING on a saved role and the
+ * last writer can leave `firstResponseAt` null while the log says a response
+ * arrived, which silently undercounts the response rate.
+ *
+ * Losing the race is not an error the user should see. Their intent — "put this
+ * in Interview" — is still valid whatever the previous status turned out to be;
+ * only the description of the move was stale. So the loser re-reads and writes
+ * a *truthful* event rather than reporting a conflict.
  */
 export async function updateApplicationStatus(
   userId: string,
   applicationId: string,
   status: ApplicationStatusValue,
 ): Promise<StatusChangeResult> {
-  // Ownership in the WHERE clause, never a check afterwards (§4). A wrong id
-  // and someone else's id are the same thing here: null, which the caller turns
-  // into a 404 rather than a 403 (§6).
-  const existing = await prisma.application.findFirst({
-    where: { id: applicationId, userId },
-    select: {
-      id: true,
-      jobTitle: true,
-      status: true,
-      appliedAt: true,
-      firstResponseAt: true,
-      company: { select: { name: true } },
-    },
-  });
+  for (let attempt = 0; attempt < STATUS_WRITE_ATTEMPTS; attempt += 1) {
+    const result = await attemptStatusChange(userId, applicationId, status);
 
-  if (!existing) {
-    throw new NotFoundError("Application not found");
+    if (result) {
+      return result;
+    }
   }
-
-  const result = {
-    id: existing.id,
-    jobTitle: existing.jobTitle,
-    companyName: existing.company.name,
-    previousStatus: existing.status,
-  };
-
-  // Dropping a card back in the column it came from is not a status change. It
-  // writes nothing — otherwise a board that is fiddled with for a minute fills
-  // the timeline with "moved to Applied" from Applied.
-  if (existing.status === status) {
-    return { ...result, status, changed: false };
-  }
-
-  const now = new Date();
-  const submitted = isSubmittedStatus(status);
 
   /*
-   * Moving back to SAVED clears both stamps.
-   *
-   * SAVED means "found it, not applied yet", so an application date cannot
-   * survive the move — and `firstResponseAt` cannot either, because a reply to
-   * an application that was never sent would make `responses` exceed
-   * `submitted` and push the response rate above 100%.
-   *
-   * It is the one case where §3's "written once, never overwritten" gives way,
-   * and deliberately so: that rule exists to stop a *later* reply overwriting
-   * the first, not to preserve a stamp on an application the user has just said
-   * was never sent. The regression is recorded as a timeline event, so the
-   * history of what happened survives even though the derived columns do not.
+   * Only reachable if every attempt had another write land underneath it. A 409
+   * rather than a 500: nothing is broken and nothing is corrupt — the stored
+   * status and the timeline still agree, this request simply never got a turn —
+   * so re-sending is the right response, which is what the client's error toast
+   * already invites.
    */
-  const regressed = !submitted;
+  throw new ConflictError("That application is being changed somewhere else. Try again.");
+}
 
-  const application = await prisma.$transaction(async (tx) => {
-    const updated = await tx.application.update({
-      where: { id: existing.id },
+/**
+ * One attempt. Returns null — never throws — when the row moved underneath it,
+ * which is the caller's signal to read again.
+ */
+async function attemptStatusChange(
+  userId: string,
+  applicationId: string,
+  status: ApplicationStatusValue,
+): Promise<StatusChangeResult | null> {
+  return prisma.$transaction(async (tx) => {
+    /*
+     * Inside the transaction, and on `tx` rather than `prisma` — the whole
+     * point of the change. Ownership stays in the WHERE clause, never a check
+     * afterwards (§4): a wrong id and someone else's id are the same thing
+     * here, null, which the caller turns into a 404 rather than a 403 (§6).
+     */
+    const existing = await tx.application.findFirst({
+      where: { id: applicationId, userId },
+      select: {
+        id: true,
+        jobTitle: true,
+        status: true,
+        appliedAt: true,
+        firstResponseAt: true,
+        company: { select: { name: true } },
+      },
+    });
+
+    if (!existing) {
+      throw new NotFoundError("Application not found");
+    }
+
+    const result = {
+      id: existing.id,
+      jobTitle: existing.jobTitle,
+      companyName: existing.company.name,
+      previousStatus: existing.status,
+    };
+
+    // Dropping a card back in the column it came from is not a status change.
+    // It writes nothing — otherwise a board that is fiddled with for a minute
+    // fills the timeline with "moved to Applied" from Applied. The board also
+    // short-circuits this client-side; this is the authoritative copy, and it
+    // is what makes a retry that finds the work already done return quietly
+    // rather than write a second identical event.
+    if (existing.status === status) {
+      return { ...result, status, changed: false };
+    }
+
+    const now = new Date();
+    const submitted = isSubmittedStatus(status);
+
+    /*
+     * Moving back to SAVED clears both stamps.
+     *
+     * SAVED means "found it, not applied yet", so an application date cannot
+     * survive the move — and `firstResponseAt` cannot either, because a reply to
+     * an application that was never sent would make `responses` exceed
+     * `submitted` and push the response rate above 100%.
+     *
+     * It is the one case where §3's "written once, never overwritten" gives way,
+     * and deliberately so: that rule exists to stop a *later* reply overwriting
+     * the first, not to preserve a stamp on an application the user has just said
+     * was never sent. The regression is recorded as a timeline event, so the
+     * history of what happened survives even though the derived columns do not.
+     */
+    const regressed = !submitted;
+
+    /*
+     * Compare-and-set: `status` is in the WHERE, so this writes only if the row
+     * still holds what was just read.
+     *
+     * `updateMany` rather than `update` because Prisma's `update` accepts only a
+     * unique `where`, and the status predicate is the entire guard. Postgres
+     * makes it a real test rather than an optimistic one: at Read Committed —
+     * what `TRANSACTION_OPTIONS` leaves in place — a blocked `UPDATE`
+     * re-evaluates its WHERE against the newest committed version of the row
+     * once the lock is released. So `count === 0` means precisely "someone
+     * committed a different status while this transaction was open", and never
+     * "the row vanished", which `findFirst` above has already ruled out.
+     */
+    const written = await tx.application.updateMany({
+      where: { id: existing.id, userId, status: existing.status },
       data: {
         status,
         appliedAt: regressed ? null : (existing.appliedAt ?? now),
@@ -137,8 +225,13 @@ export async function updateApplicationStatus(
             // date, so "time to first response" measures the first one.
             (existing.firstResponseAt ?? (isResponseStatus(status) ? now : null)),
       },
-      select: { status: true },
     });
+
+    if (written.count === 0) {
+      // Lost. Nothing has been written, so returning from here leaves an empty
+      // transaction to commit and the caller starts again from a fresh read.
+      return null;
+    }
 
     await tx.applicationEvent.create({
       data: {
@@ -146,16 +239,17 @@ export async function updateApplicationStatus(
         applicationId: existing.id,
         type: EventType.STATUS_CHANGE,
         title: `Moved to ${APPLICATION_STATUS_LABELS[status]}`,
+        // True by construction now: the update above refused to run unless the
+        // row still held `existing.status`, so this names the status the
+        // application actually moved from.
         description: `From ${APPLICATION_STATUS_LABELS[existing.status]}`,
         occurredAt: now,
         isAutomatic: true,
       },
     });
 
-    return updated;
+    return { ...result, status, changed: true };
   }, TRANSACTION_OPTIONS);
-
-  return { ...result, status: application.status, changed: true };
 }
 
 export async function createApplication(

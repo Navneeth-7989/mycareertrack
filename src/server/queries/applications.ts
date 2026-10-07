@@ -93,6 +93,141 @@ export async function listApplications(
 }
 
 /**
+ * Everything the detail page shows about one application.
+ *
+ * A wider select than `listSelect` on purpose — this is the one screen that
+ * reads `jobDescription`, which is a `@db.Text` column and is exactly the kind
+ * of field that should never be dragged into a list query for 20 rows at a
+ * time.
+ */
+const detailSelect = {
+  id: true,
+  jobTitle: true,
+  jobUrl: true,
+  location: true,
+  workMode: true,
+  employmentType: true,
+  salaryMin: true,
+  salaryMax: true,
+  currency: true,
+  status: true,
+  priority: true,
+  source: true,
+  savedAt: true,
+  appliedAt: true,
+  deadline: true,
+  jobDescription: true,
+  firstResponseAt: true,
+  updatedAt: true,
+  company: { select: { id: true, name: true, website: true } },
+  contacts: {
+    select: {
+      // The role on *this* application, which is why it lives on the join —
+      // the same person can be a referrer here and the hiring manager there.
+      role: true,
+      contact: {
+        select: {
+          id: true,
+          name: true,
+          role: true,
+          email: true,
+          phone: true,
+          linkedinUrl: true,
+        },
+      },
+    },
+    orderBy: { createdAt: "asc" },
+  },
+} satisfies Prisma.ApplicationSelect;
+
+/**
+ * `isAutomatic` is deliberately absent. Nothing writes a manual event yet, so
+ * every row would come back `true` and the column would be data the page
+ * fetched and never read. Phase 3 adds it back alongside the manual entries it
+ * is there to distinguish.
+ */
+const timelineSelect = {
+  id: true,
+  type: true,
+  title: true,
+  description: true,
+  occurredAt: true,
+} satisfies Prisma.ApplicationEventSelect;
+
+export type ApplicationTimelineEvent = Prisma.ApplicationEventGetPayload<{
+  select: typeof timelineSelect;
+}>;
+
+export type ApplicationDetail = Prisma.ApplicationGetPayload<{ select: typeof detailSelect }> & {
+  events: ApplicationTimelineEvent[];
+  /** True when the timeline was truncated by `TIMELINE_LIMIT`. */
+  hasMoreEvents: boolean;
+};
+
+/**
+ * How many timeline entries the detail page renders.
+ *
+ * Generous rather than tight: today the only events are automatic — one on
+ * create, one per status change — so fifty is well past what any real
+ * application accumulates. It is a bound rather than a feature, for the same
+ * reason as `BOARD_COLUMN_LIMIT`. Phase 3 adds manual events and is where
+ * paging the timeline belongs, if it ever needs to.
+ */
+export const TIMELINE_LIMIT = 50;
+
+/**
+ * One application, with its timeline and linked contacts.
+ *
+ * `findFirst({ id, userId })`, never `findUnique({ id })` — the §4 rule that
+ * puts ownership in the WHERE clause rather than in a check someone has to
+ * remember. A wrong id and another user's id both come back null, and the page
+ * turns that into a 404 rather than a 403 (§6), so the response never confirms
+ * that somebody else's application exists.
+ *
+ * The two queries run concurrently rather than in sequence. The events query
+ * carries `userId` in its own WHERE clause, so it is independently scoped and
+ * does not need the application read to have proved ownership first — which is
+ * the whole point of the denormalised `userId` on every child table (§3). The
+ * cost is one wasted query on a 404, which is the rare path.
+ */
+export async function getApplication(
+  userId: string,
+  applicationId: string,
+): Promise<ApplicationDetail | null> {
+  const [application, events] = await Promise.all([
+    prisma.application.findFirst({
+      where: { id: applicationId, userId },
+      select: detailSelect,
+    }),
+    prisma.applicationEvent.findMany({
+      where: { applicationId, userId },
+      select: timelineSelect,
+      /*
+       * Newest first, tie-broken on `id` — the same discipline as
+       * `buildOrderBy`, and it bites harder here. Creating an application past
+       * APPLIED writes its opening event and its status event with timestamps
+       * that can land in the same millisecond, so without the tiebreaker the
+       * two could swap places between renders of the same page.
+       */
+      orderBy: [{ occurredAt: "desc" }, { id: "desc" }],
+      // One more than the limit, which is how the page knows whether anything
+      // was left out without a second count query.
+      take: TIMELINE_LIMIT + 1,
+    }),
+  ]);
+
+  if (!application) {
+    return null;
+  }
+
+  return {
+    ...application,
+    events: events.slice(0, TIMELINE_LIMIT),
+    hasMoreEvents: events.length > TIMELINE_LIMIT,
+  };
+}
+
+/**
  * The `WHERE` clause. Exported for the board in the next step, which applies
  * the same filters without the pagination.
  *

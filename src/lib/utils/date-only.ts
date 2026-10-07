@@ -110,3 +110,57 @@ export function todayAsDateOnly(now: Date = new Date()): string {
 
   return `${now.getFullYear()}-${month}-${day}`;
 }
+
+/** Milliseconds in a day. Exact, because both operands below are UTC midnight. */
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Whole days from a stored date to today — positive for the past, negative for
+ * the future, zero for today.
+ *
+ * Both sides are reduced to a UTC-midnight instant first, which is what makes
+ * the division exact: subtracting the raw timestamps would cross a DST
+ * boundary in some zones and come out at 23.96 days, and `Math.floor` on that
+ * is off by one for half the year. Reducing to midnight first means the
+ * difference is always a whole number of days, so `Math.round` is only there to
+ * absorb float noise.
+ *
+ * "Today" is the viewer's today rather than UTC's, for the reason in
+ * `todayAsDateOnly`: "how long ago" is a question about the user's calendar.
+ */
+export function daysSinceDateOnly(date: Date, now: Date = new Date()): number {
+  if (Number.isNaN(date.getTime())) {
+    return 0;
+  }
+
+  const then = parseDateOnly(toDateInputValue(date));
+  const today = parseDateOnly(todayAsDateOnly(now));
+
+  return Math.round((today.getTime() - then.getTime()) / DAY_MS);
+}
+
+/**
+ * A day count → the phrase that goes beside a date: "today", "4 days ago",
+ * "in 2 days".
+ *
+ * Lower case and without a date in it, so it reads as a suffix — "2 Oct 2026 ·
+ * 5 days ago" — rather than as a replacement for the date. A relative label on
+ * its own is the wrong trade here: "3 weeks ago" is easier to feel but
+ * impossible to check against an email, and an application date is something
+ * people genuinely cross-reference.
+ */
+export function relativeDayLabel(days: number): string {
+  if (days === 0) {
+    return "today";
+  }
+
+  if (days === 1) {
+    return "yesterday";
+  }
+
+  if (days === -1) {
+    return "tomorrow";
+  }
+
+  return days > 0 ? `${days} days ago` : `in ${-days} days`;
+}

@@ -338,3 +338,18 @@ export const applicationWarningsSchema = z
   .object({ warnings: z.array(applicationWarningSchema).optional() })
   .catch({ warnings: [] })
   .transform((body) => body.warnings ?? []);
+
+/**
+ * Reads the new application's id out of a create response, so the form can send
+ * the user to its detail page.
+ *
+ * Tolerant for the same reason as `applicationWarningsSchema`, and it matters
+ * more here: the row has already been written by the time this runs, so a body
+ * that cannot be parsed must not turn a successful save into an error. Null is
+ * the caller's cue to fall back to the list — a worse destination, not a
+ * failure.
+ */
+export const createdApplicationIdSchema = z
+  .object({ data: z.object({ id: z.string().min(1) }) })
+  .catch({ data: { id: "" } })
+  .transform((body) => body.data.id || null);
