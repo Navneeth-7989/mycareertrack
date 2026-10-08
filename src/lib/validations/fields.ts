@@ -166,6 +166,30 @@ export function optionalWholeNumber(label: string, min: number, max: number) {
 export const idSchema = z.string().trim().min(1, { error: "Required" }).max(64);
 
 /**
+ * A row id the user may leave unset — the resume an application was sent with.
+ *
+ * The optional counterpart of `idSchema`, and it has to be its own builder rather
+ * than `idSchema.optional()` because the input side is a `<select>`: an unchosen
+ * option submits `""`, and absent means the same thing. Both become null, the
+ * same bargain `optionalEnum` makes, so a nullable foreign key never holds an
+ * empty string.
+ *
+ * Length-bounded only. Whether the id *exists*, and whether it belongs to the
+ * caller, cannot be a schema's answer — it takes a query, which is the mutation's
+ * job (§4 puts ownership in the WHERE clause). A plausible-looking id that is
+ * somebody else's gets through here and is refused there, which is the correct
+ * division: this file never touches the database.
+ */
+export function optionalId(label: string) {
+  return z
+    .string()
+    .optional()
+    .transform((value) => (value ?? "").trim())
+    .refine((value) => value.length <= 64, { error: `Choose a valid ${label}` })
+    .transform((value) => (value === "" ? null : value));
+}
+
+/**
  * Tolerance on dates that must not be in the future.
  *
  * One day, not zero: a date-only value is stored as midnight **UTC** on the

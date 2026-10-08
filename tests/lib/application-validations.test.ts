@@ -525,6 +525,7 @@ describe("toApplicationFormValues", () => {
     appliedAt: null,
     deadline: null,
     jobDescription: null,
+    resumeId: null,
     recruiter: null,
   } as const;
 
@@ -583,6 +584,27 @@ describe("toApplicationFormValues", () => {
     // and submit as invalid, with no way for the user to see why.
     expect(toApplicationFormValues({ ...stored, currency: "XYZ" }).currency).toBe("INR");
     expect(toApplicationFormValues({ ...stored, currency: null }).currency).toBe("INR");
+  });
+
+  /**
+   * The resume an application was sent with (Phase 4). A nullable foreign key,
+   * so it goes through the same blank-is-null rule as every other optional
+   * field — an empty string in the column would be a third state meaning the
+   * same as the second.
+   */
+  it("round-trips the resume id, and maps none to an empty string", () => {
+    expect(toApplicationFormValues({ ...stored }).resumeId).toBe("");
+
+    const values = toApplicationFormValues({ ...stored, resumeId: "cmg1resume000000000000000" });
+
+    expect(values.resumeId).toBe("cmg1resume000000000000000");
+    expect(createApplicationSchema.parse(values).resumeId).toBe("cmg1resume000000000000000");
+  });
+
+  it("reads an unselected resume back as null, not an empty string", () => {
+    expect(
+      createApplicationSchema.parse(toApplicationFormValues({ ...stored })).resumeId,
+    ).toBeNull();
   });
 
   it("prefers the per-application role over the contact's own", () => {

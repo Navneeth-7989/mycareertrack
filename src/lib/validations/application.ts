@@ -20,6 +20,7 @@ import {
   isFutureDateOnly,
   optionalDateOnly,
   optionalEnum,
+  optionalId,
   optionalText,
   requiredText,
 } from "@/lib/validations/fields";
@@ -131,6 +132,22 @@ const applicationFields = {
   deadline: optionalDateOnly("deadline"),
 
   jobDescription: optionalText("Job description", JOB_DESCRIPTION_MAX),
+
+  /**
+   * Which resume version was sent (Phase 4).
+   *
+   * A real column on `Application`, unlike the recruiter block below — the
+   * relation is `onDelete: Restrict` (§3), so an application cannot be left
+   * pointing at a hard-deleted resume. It never is: deleting a resume is a soft
+   * delete, which is the whole reason this field can be trusted to still answer
+   * "which version got the interview" a year later.
+   *
+   * Validated for shape only. Whether the id is a resume, is this user's, and is
+   * still available is decided by `createApplication` and `updateApplication`,
+   * which can query — and which disagree on purpose about the deleted case. See
+   * `resolveResumeId`.
+   */
+  resumeId: optionalId("resume"),
 
   /**
    * The recruiter block. These are not columns on `Application` — they feed
@@ -277,6 +294,7 @@ export const EMPTY_APPLICATION_FORM: Required<ApplicationFormValues> = {
   appliedAt: "",
   deadline: "",
   jobDescription: "",
+  resumeId: "",
   recruiterName: "",
   recruiterRole: "",
   recruiterEmail: "",
@@ -306,6 +324,8 @@ export type ApplicationFormSource = {
   appliedAt: Date | null;
   deadline: Date | null;
   jobDescription: string | null;
+  /** The resume this application was sent with, or null. */
+  resumeId: string | null;
   /** The contact the recruiter block edits, or null when none is linked. */
   recruiter: {
     name: string | null;
@@ -356,6 +376,7 @@ export function toApplicationFormValues(
     appliedAt: toDateInputValue(source.appliedAt),
     deadline: toDateInputValue(source.deadline),
     jobDescription: source.jobDescription ?? "",
+    resumeId: source.resumeId ?? "",
     recruiterName: source.recruiter?.name ?? "",
     recruiterRole: source.recruiter?.role ?? "",
     recruiterEmail: source.recruiter?.email ?? "",

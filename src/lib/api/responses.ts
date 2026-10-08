@@ -105,6 +105,34 @@ export function parseSearchParams<S extends z.ZodType>(
   return parseWith(schema, record);
 }
 
+/**
+ * The multipart counterpart of `parseJsonBody`, for the one endpoint that cannot
+ * be JSON — the resume upload (DESIGN.md §6).
+ *
+ * **Text fields only.** A `File` entry is skipped rather than passed to the
+ * schema, because Zod has nothing useful to say about a blob: a file needs its
+ * size measured and its leading bytes inspected, which is `verifyResumeFile`'s
+ * job, not a schema's. So the route pulls the file out itself and this parses
+ * everything around it, with the same field-error mapping the forms already
+ * render inline.
+ *
+ * A repeated key keeps its last value. `URLSearchParams` has to handle
+ * duplicates because repeatable filters are a real shape on the wire (see
+ * `parseSearchParams`); a form posting one field twice is a client bug, and the
+ * last-write-wins reading is what a plain `Object.fromEntries` would do anyway.
+ */
+export function parseFormFields<S extends z.ZodType>(form: FormData, schema: S): z.output<S> {
+  const record: Record<string, string> = {};
+
+  for (const [key, value] of form.entries()) {
+    if (typeof value === "string") {
+      record[key] = value;
+    }
+  }
+
+  return parseWith(schema, record);
+}
+
 function parseWith<S extends z.ZodType>(schema: S, input: unknown): z.output<S> {
   const result = schema.safeParse(input);
 

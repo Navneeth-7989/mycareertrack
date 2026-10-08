@@ -4,6 +4,7 @@ import { ArrowLeft } from "lucide-react";
 import { ApplicationForm } from "@/components/applications/application-form";
 import { PageHeader } from "@/components/layout/page-header";
 import { ButtonLink } from "@/components/ui/button";
+import { listResumeOptions } from "@/server/queries/resumes";
 import { requireUser } from "@/server/require-user";
 
 export const metadata: Metadata = {
@@ -13,17 +14,23 @@ export const metadata: Metadata = {
 /**
  * `/applications/new` — the create form.
  *
- * A Server Component that renders a client island, per §4: there is nothing to
- * fetch for an empty form, so the page's only job is the auth guard and the
- * heading. The form owns its own state and the company autocomplete fetches on
- * demand.
+ * A Server Component that renders a client island, per §4. It fetches one thing
+ * — the user's resumes, for the "What you sent" picker, which also needs to know
+ * which is the default so a new application can start on it. Everything else the
+ * form needs it owns itself, and the company autocomplete fetches on demand.
+ *
+ * No `currentId` argument to `listResumeOptions`: there is no application yet, so
+ * a deleted resume has nothing to stay attached to and only live ones are
+ * offered. The edit page is the one that passes it.
  *
  * `requireUser()` here as well as in the layout is deliberate (§8, "both
  * layers, not one"), and it is served from the same request's cache rather than
  * querying twice.
  */
 export default async function NewApplicationPage() {
-  await requireUser();
+  const user = await requireUser();
+
+  const resumeOptions = await listResumeOptions(user.id);
 
   return (
     <div className="flex flex-col gap-8">
@@ -38,7 +45,7 @@ export default async function NewApplicationPage() {
         }
       />
 
-      <ApplicationForm />
+      <ApplicationForm resumeOptions={resumeOptions} />
     </div>
   );
 }

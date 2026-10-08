@@ -1,6 +1,11 @@
-import { EventType } from "@prisma/client";
+import { EventType, Prisma } from "@prisma/client";
 
-import { ConfirmationRequiredError, ConflictError, NotFoundError } from "@/lib/api/errors";
+import {
+  ConfirmationRequiredError,
+  ConflictError,
+  NotFoundError,
+  ValidationError,
+} from "@/lib/api/errors";
 import {
   APPLICATION_STATUS_LABELS,
   isResponseStatus,
@@ -305,6 +310,9 @@ export async function updateApplication(
         jobTitle: true,
         status: true,
         appliedAt: true,
+        // What this application already names, which is what lets a resume
+        // deleted since the form loaded stay attached. See `resolveResumeId`.
+        resumeId: true,
         contacts: {
           select: { contactId: true },
           orderBy: { createdAt: "asc" },
@@ -357,6 +365,8 @@ export async function updateApplication(
       });
     }
 
+    const resumeId = await resolveResumeId(tx, userId, payload.resumeId, existing.resumeId);
+
     const application = await tx.application.update({
       where: { id: existing.id },
       data: {
@@ -373,6 +383,7 @@ export async function updateApplication(
         source: payload.source,
         deadline: payload.deadline,
         jobDescription: payload.jobDescription,
+        resumeId,
         appliedAt: nextAppliedAt(existing, payload.appliedAt),
       },
       select: { id: true, jobTitle: true },
@@ -427,6 +438,58 @@ function nextAppliedAt(
   }
 
   return submitted ?? existing.appliedAt ?? new Date();
+}
+
+/**
+ * Validates the resume an application claims to have been sent with (Phase 4).
+ *
+ * `resumeId` arrives in a request body, so this read is the only thing standing
+ * between a forged id and an application pointing at a stranger's resume. The
+ * `userId` in the WHERE clause is what makes that impossible rather than
+ * unlikely (§4) — the same shape as the `applicationId` check in
+ * `createAssessment`.
+ *
+ * **`currentId` is what makes create and update differ, and the difference is
+ * deliberate.** A deleted resume may not be newly attached to anything — the file
+ * is gone, so saying it was sent with an application logged today would be false.
+ * But an application that *already* names one must keep naming it: that record is
+ * the entire reason the delete is soft, and an edit to the salary field silently
+ * dropping it would destroy the history the feature exists to preserve. So
+ * `updateApplication` passes the stored id and a resume is allowed to stay where
+ * it already is, while `createApplication` passes null and only live resumes are
+ * accepted.
+ *
+ * A `ValidationError` keyed to the field rather than a 404, because this is a
+ * form field and the form pins field errors to their inputs. The realistic cause
+ * is a stale page — the resume was deleted in another tab since this form
+ * loaded — and "that resume is no longer available" under the picker is a
+ * complaint the user can act on, where a 404 would read as the application
+ * itself having vanished.
+ */
+async function resolveResumeId(
+  tx: Pick<Prisma.TransactionClient, "resume">,
+  userId: string,
+  requested: string | null,
+  currentId: string | null,
+): Promise<string | null> {
+  if (requested === null) {
+    return null;
+  }
+
+  const resume = await tx.resume.findFirst({
+    where: {
+      id: requested,
+      userId,
+      ...(requested === currentId ? {} : { deletedAt: null }),
+    },
+    select: { id: true },
+  });
+
+  if (!resume) {
+    throw new ValidationError({ resumeId: "That resume is no longer available" });
+  }
+
+  return resume.id;
 }
 
 export type DeletedApplication = {
@@ -671,6 +734,10 @@ export async function createApplication(
       });
     }
 
+    // Null on create, so only a live resume can be attached to a new
+    // application. See `resolveResumeId` for why an edit is allowed to differ.
+    const resumeId = await resolveResumeId(tx, userId, payload.resumeId, null);
+
     const application = await tx.application.create({
       data: {
         userId,
@@ -689,6 +756,7 @@ export async function createApplication(
         appliedAt,
         deadline: payload.deadline,
         jobDescription: payload.jobDescription,
+        resumeId,
         /**
          * Stamped on create when the status already implies a reply, which is
          * the case for someone logging an application they have been

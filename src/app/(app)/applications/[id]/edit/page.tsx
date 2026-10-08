@@ -8,6 +8,7 @@ import { PageHeader } from "@/components/layout/page-header";
 import { ButtonLink } from "@/components/ui/button";
 import { toApplicationFormValues } from "@/lib/validations/application";
 import { getApplicationForEdit } from "@/server/queries/applications";
+import { listResumeOptions } from "@/server/queries/resumes";
 import { requireUser } from "@/server/require-user";
 
 /**
@@ -57,6 +58,24 @@ export default async function EditApplicationPage({
     notFound();
   }
 
+  /*
+   * The application's current resume is passed in, which is what keeps a version
+   * deleted since it was sent among the choices — marked "(deleted)" rather than
+   * silently dropped, because a select opening on a value it does not contain
+   * would clear the link on the next save and destroy exactly the record the
+   * soft delete exists to preserve. See `listResumeOptions`.
+   *
+   * Fetched after the application rather than beside it: the argument depends on
+   * the row, and a 404 should not pay for a resume query it will not use.
+   *
+   * `requireUser()` again rather than threaded down from `loadApplication` —
+   * it is `cache()`d per request, so this is the same row already read, not a
+   * second query (see `require-user`).
+   */
+  const user = await requireUser();
+
+  const resumeOptions = await listResumeOptions(user.id, application.resumeId);
+
   const link = application.contacts[0];
 
   return (
@@ -75,6 +94,7 @@ export default async function EditApplicationPage({
       />
 
       <ApplicationForm
+        resumeOptions={resumeOptions}
         application={{
           id: application.id,
           values: toApplicationFormValues({

@@ -120,6 +120,26 @@ const detailSelect = {
   firstResponseAt: true,
   updatedAt: true,
   company: { select: { id: true, name: true, website: true } },
+  /**
+   * Which version was sent (Phase 4).
+   *
+   * `deletedAt` is selected rather than filtered on, which is the opposite of
+   * what every other resume read does — and is the point of the soft delete. A
+   * deleted resume must still appear here, marked, so the page can say
+   * "Frontend Resume (deleted)" (§3): the answer to "which resume got me this
+   * interview" is the record worth keeping even once the file is gone.
+   *
+   * `storagePath` is deliberately absent. It never reaches the browser; a
+   * download goes through `/api/resumes/:id/download`, which re-reads the row
+   * and checks ownership itself.
+   *
+   * `fileName` and `mimeType` are here for the preview: the dialog shows the
+   * file name under the title, and the MIME type is what decides whether this
+   * row offers a preview at all or only a download (`canPreviewResume`).
+   */
+  resume: {
+    select: { id: true, label: true, fileName: true, mimeType: true, deletedAt: true },
+  },
   contacts: {
     select: {
       // The role on *this* application, which is why it lives on the join —
@@ -327,6 +347,10 @@ const editSelect = {
   appliedAt: true,
   deadline: true,
   jobDescription: true,
+  // The id alone, not the row: the form needs it to pre-select the picker, and
+  // the labels come from `listResumeOptions`, which the page fetches with it so
+  // that a deleted-but-attached resume is still among the choices.
+  resumeId: true,
   company: { select: { id: true, name: true } },
   contacts: {
     select: {

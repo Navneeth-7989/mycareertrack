@@ -1,12 +1,14 @@
 import type { ReactNode } from "react";
-import { ExternalLink } from "lucide-react";
+import { Download, ExternalLink } from "lucide-react";
 
+import { ResumePreview } from "@/components/resumes/resume-preview";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   APPLICATION_SOURCE_LABELS,
   PRIORITY_LABELS,
   type PriorityValue,
 } from "@/lib/constants/application";
+import { canPreviewResume } from "@/lib/constants/resume";
 import { formatDateOnly } from "@/lib/utils/date-only";
 import { formatSalaryRange } from "@/lib/utils/salary";
 import type { ApplicationDetail } from "@/server/queries/applications";
@@ -73,6 +75,15 @@ function facts(application: ApplicationDetail): Fact[] {
 
   rows.push({ label: "Priority", value: priorityValue(application.priority) });
 
+  /*
+   * Which version was sent — the fact §1 names as the product's answer to "no
+   * idea which resume I actually used". Omitted when none was recorded, like
+   * every other optional row here.
+   */
+  if (application.resume) {
+    rows.push({ label: "Resume", value: <ResumeValue resume={application.resume} /> });
+  }
+
   if (application.company.website) {
     rows.push({
       label: "Company",
@@ -89,6 +100,51 @@ function facts(application: ApplicationDetail): Fact[] {
   rows.push({ label: "Updated", value: formatDateOnly(application.updatedAt) });
 
   return rows;
+}
+
+/**
+ * The resume this application was sent with.
+ *
+ * Three states, and each is a different thing to offer:
+ *
+ * - **A live PDF** opens in place. This row is where "which resume did I send?"
+ *   actually gets asked — the user is looking at the application that got the
+ *   interview — so the answer should be the document, not a file in a downloads
+ *   folder.
+ * - **A live DOCX** is a download, because no browser renders one
+ *   (`canPreviewKind`).
+ * - **A deleted resume** is plain muted text. §9's soft delete exists so this row
+ *   can still answer the question after the file has gone, and rendering it as
+ *   un-clickable text with "(deleted)" beside it is what makes that legible —
+ *   there is nothing to open, and the row says why rather than offering a link
+ *   that would fail.
+ *
+ * Plain anchors, not `next/link` — these hrefs are API routes that redirect to a
+ * signed URL, so `next/link` would treat them as pages and prefetch them, minting
+ * a signed URL on hover. See the download route.
+ */
+function ResumeValue({ resume }: { resume: NonNullable<ApplicationDetail["resume"]> }) {
+  if (resume.deletedAt) {
+    return (
+      <span className="text-muted-foreground font-normal">
+        {resume.label} <span className="text-muted-foreground/70">(deleted)</span>
+      </span>
+    );
+  }
+
+  if (canPreviewResume(resume.mimeType)) {
+    return <ResumePreview resume={resume} />;
+  }
+
+  return (
+    <a
+      href={`/api/resumes/${resume.id}/download`}
+      className="text-primary focus-visible:ring-ring/40 inline-flex items-center gap-1.5 rounded-sm hover:underline focus-visible:ring-3 focus-visible:outline-none"
+    >
+      <span className="truncate">{resume.label}</span>
+      <Download aria-hidden="true" className="size-3.5 shrink-0" />
+    </a>
+  );
 }
 
 /**

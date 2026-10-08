@@ -7,7 +7,7 @@ import { Controller, useForm, useWatch } from "react-hook-form";
 
 import { CompanyCombobox } from "@/components/applications/company-combobox";
 import { StatusBadge } from "@/components/applications/status-badge";
-import { EnumSelect, enumOptions } from "@/components/form/enum-select";
+import { EnumSelect, enumOptions, type EnumOption } from "@/components/form/enum-select";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
   AlertDialog,
@@ -49,6 +49,7 @@ import {
   type ApplicationFormPayload,
   type ApplicationFormValues,
 } from "@/lib/validations/application";
+import type { ResumeOption } from "@/server/queries/resumes";
 
 /**
  * The application form — create and edit both (DESIGN.md §7, Phase 2).
@@ -97,6 +98,39 @@ const WORK_MODE_OPTIONS = enumOptions(WORK_MODES, WORK_MODE_LABELS);
 const EMPLOYMENT_TYPE_OPTIONS = enumOptions(EMPLOYMENT_TYPES, EMPLOYMENT_TYPE_LABELS);
 const CURRENCY_OPTIONS = CURRENCIES.map((code) => ({ value: code, label: code }));
 
+/**
+ * The resume picker's options.
+ *
+ * A function rather than a module constant like the five enums above, because
+ * these come from the database and differ per user. The file name is the hint:
+ * two versions can easily be labelled "Resume" and "Resume (new)", and the file
+ * they were uploaded from is what distinguishes them.
+ *
+ * **"(deleted)" is appended here**, in the one place that renders a resume as a
+ * choice, so a version whose file is gone cannot be mistaken for one that can
+ * still be downloaded. `listResumeOptions` only ever marks the resume the
+ * application already names — see its note for why that one has to be offered.
+ */
+function resumeChoices(resumes: ResumeOption[]): EnumOption[] {
+  return resumes.map((resume) => ({
+    value: resume.id,
+    label: resume.isDeleted ? `${resume.label} (deleted)` : resume.label,
+    hint: resume.fileName,
+  }));
+}
+
+/**
+ * The resume a new application should start on, or "" for none.
+ *
+ * A deleted resume is skipped even if it still carries the flag. `deleteResume`
+ * clears `isDefault`, so this should be unreachable — but it is one `&&` to make
+ * the create form structurally incapable of pre-selecting something the server
+ * would then refuse.
+ */
+function defaultResumeId(resumes: ResumeOption[]): string {
+  return resumes.find((resume) => resume.isDefault && !resume.isDeleted)?.id ?? "";
+}
+
 type FieldName = keyof ApplicationFormValues;
 
 const FIELD_NAMES = Object.keys(EMPTY_APPLICATION_FORM) as FieldName[];
@@ -124,7 +158,22 @@ export type ApplicationToEdit = {
   otherApplicationsForContact: number;
 };
 
-export function ApplicationForm({ application }: { application?: ApplicationToEdit }) {
+export function ApplicationForm({
+  application,
+  resumeOptions = [],
+}: {
+  application?: ApplicationToEdit;
+  /**
+   * The user's resumes, for the picker in "What you sent".
+   *
+   * Fetched by the page rather than by this component, because it is a Server
+   * Component's job — and because the edit page has to pass the application's
+   * current id to `listResumeOptions` so that a resume deleted since it was sent
+   * is still among the choices. Empty when the user has uploaded nothing, which
+   * swaps the select for a link to `/resumes`.
+   */
+  resumeOptions?: ResumeOption[];
+}) {
   const router = useRouter();
   const [formError, setFormError] = useState<string | null>(null);
 
@@ -178,7 +227,18 @@ export function ApplicationForm({ application }: { application?: ApplicationToEd
      */
     resolver: zodResolver(createApplicationSchema),
     mode: "onTouched",
-    defaultValues: application?.values ?? EMPTY_APPLICATION_FORM,
+    /*
+     * On create the resume starts on the user's default, which is the entire
+     * point of having one — most applications go out with the same version, and
+     * a picker that always started blank would make recording it a chore people
+     * skip. On edit the stored value wins, including a blank one: an application
+     * logged before any resume existed must not acquire one because the user has
+     * since set a default.
+     */
+    defaultValues: application?.values ?? {
+      ...EMPTY_APPLICATION_FORM,
+      resumeId: defaultResumeId(resumeOptions),
+    },
   });
 
   const status = (useWatch({ control, name: "status" }) ??
@@ -618,6 +678,76 @@ export function ApplicationForm({ application }: { application?: ApplicationToEd
               </Field>
             </div>
           </FieldGroup>
+        </CardContent>
+      </Card>
+
+      {/*
+       * Its own card rather than a field in "Where it stands", because it is not
+       * where the application stands — it is what left your hands. Placed
+       * directly after the dates for the same reason: the resume and the date
+       * applied are the two facts about the submission itself, and a year later
+       * they are the two people actually come back for.
+       */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg">What you sent</CardTitle>
+          <CardDescription>
+            {resumeOptions.length > 0
+              ? "Which version of your resume went out, so you can tell later which one got the interview."
+              : "Upload a resume and you can record which version went out with each application."}
+          </CardDescription>
+        </CardHeader>
+
+        <CardContent>
+          {resumeOptions.length === 0 ? (
+            /*
+             * A link rather than a disabled select. An empty dropdown is a dead
+             * control that says nothing about why it is empty, and the fix is one
+             * page away — so the card spends its space pointing there instead.
+             */
+            <ButtonLink variant="outline" href="/resumes">
+              Upload a resume
+            </ButtonLink>
+          ) : (
+            <FieldGroup>
+              <Field data-invalid={!!errors.resumeId} className="sm:max-w-sm">
+                <FieldLabel htmlFor="resumeId">Resume</FieldLabel>
+
+                <Controller
+                  control={control}
+                  name="resumeId"
+                  render={({ field }) => (
+                    <EnumSelect
+                      id="resumeId"
+                      value={field.value ?? ""}
+                      onValueChange={field.onChange}
+                      onBlur={field.onBlur}
+                      options={resumeChoices(resumeOptions)}
+                      emptyLabel="Not recorded"
+                      invalid={!!errors.resumeId}
+                      describedBy={errors.resumeId ? "resumeId-error" : "resumeId-hint"}
+                      disabled={busy}
+                    />
+                  )}
+                />
+
+                <FieldDescription id="resumeId-hint">
+                  {/*
+                   * Two different promises, because the two screens genuinely
+                   * differ: a new application starts on the default, while an
+                   * edit starts on whatever was stored — including a version
+                   * since deleted, which stays selectable so that correcting a
+                   * salary cannot quietly erase which resume was sent.
+                   */}
+                  {isEdit
+                    ? "A version you have since deleted stays recorded here, marked as deleted."
+                    : "Starts on your default resume. Change it if this application went out with a different version."}
+                </FieldDescription>
+
+                <FieldError id="resumeId-error" errors={[errors.resumeId]} />
+              </Field>
+            </FieldGroup>
+          )}
         </CardContent>
       </Card>
 
