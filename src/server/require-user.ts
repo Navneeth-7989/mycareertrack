@@ -15,6 +15,16 @@ import { prisma } from "./db";
  * identity.
  */
 
+/**
+ * The notification preferences and `reminderHours` joined this select in Phase 4
+ * step 3, and they belong here rather than in a second query.
+ *
+ * Generation runs on the render path of every authenticated page and needs all
+ * five values plus the id — so fetching them separately would add a second read
+ * of the same row to every request, when this one is already happening and is
+ * already memoised. They are columns on `User` precisely so there is no join to
+ * pay for (§10.1). The settings page gets them for free as a side effect.
+ */
 const currentUserSelect = {
   id: true,
   email: true,
@@ -23,6 +33,11 @@ const currentUserSelect = {
   timezone: true,
   defaultView: true,
   onboardingCompleted: true,
+  notifyInterviews: true,
+  notifyAssessments: true,
+  notifyDeadlines: true,
+  notifyTasks: true,
+  reminderHours: true,
 } satisfies Prisma.UserSelect;
 
 export type CurrentUser = Prisma.UserGetPayload<{ select: typeof currentUserSelect }>;

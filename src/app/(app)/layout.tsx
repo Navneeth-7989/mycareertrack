@@ -4,7 +4,9 @@ import { redirect } from "next/navigation";
 import { Sidebar } from "@/components/layout/sidebar";
 import { Topbar } from "@/components/layout/topbar";
 import { ToastViewport } from "@/components/ui/toast";
+import { getNotificationBellCounts } from "@/server/queries/notifications";
 import { requireUser } from "@/server/require-user";
+import { ensureNotificationsGenerated } from "@/server/services/notifications";
 
 /**
  * The app shell, and the auth and onboarding guard for every page inside it
@@ -34,12 +36,32 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
     redirect("/onboarding");
   }
 
+  /*
+   * Notification generation, and the badge it feeds — DESIGN.md §3's
+   * compute-on-read model. This is the "any authenticated page" the design
+   * names: there is no cron because the inbox is in-app only, so the work only
+   * matters at the moment someone opens the app, which is here.
+   *
+   * It runs *after* the onboarding gate on purpose. A user still in the wizard
+   * has no applications to be reminded about, and paying four reads to confirm
+   * that on every step of signup would be the most wasteful place in the app
+   * to do it.
+   *
+   * Sequential, not `Promise.all`: the counts have to be read after generation
+   * or the badge would be one page load behind the notifications it is
+   * counting. `ensureNotificationsGenerated` swallows its own failures, so a
+   * generation problem degrades the badge rather than replacing every page in
+   * the app with an error — see its comment.
+   */
+  await ensureNotificationsGenerated(user);
+  const notifications = await getNotificationBellCounts(user.id);
+
   return (
     <ToastViewport>
       <Sidebar />
 
       <div className="flex min-h-full flex-1 flex-col lg:pl-64">
-        <Topbar name={user.name} email={user.email} />
+        <Topbar name={user.name} email={user.email} notifications={notifications} />
 
         <main className="flex-1 px-4 py-8 sm:px-6 sm:py-10 lg:px-8">
           <div className="mx-auto w-full max-w-7xl">{children}</div>

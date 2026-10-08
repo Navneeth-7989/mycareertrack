@@ -1,11 +1,11 @@
 import Link from "next/link";
-import { Bell } from "lucide-react";
 
 import { UserMenu } from "@/components/account/user-menu";
 import { Logo } from "@/components/brand/logo";
-import { ButtonLink } from "@/components/ui/button";
+import type { NotificationBellCounts } from "@/server/queries/notifications";
 
 import { MobileNav } from "./mobile-nav";
+import { NotificationBell } from "./notification-bell";
 import { SectionLabel } from "./section-label";
 
 /**
@@ -16,11 +16,21 @@ import { SectionLabel } from "./section-label";
  * application") belong to the page header instead, next to the heading they act
  * on, so the topbar stays the same on every screen.
  *
- * The bell links to the inbox rather than opening a dropdown. The unread badge
- * and the dropdown both arrive with the notification work in Phase 4; shipping
- * a bell that opens an empty popover now would be a control that does nothing.
+ * The bell links to the inbox rather than opening a dropdown, and that stayed
+ * true when Phase 4 added the badge — see `NotificationBell` for why a popover
+ * was not the answer. The counts are passed down rather than read here so the
+ * topbar stays free of queries: `(app)/layout.tsx` generates and counts in one
+ * place, which is also what keeps the badge in step with the inbox.
  */
-export function Topbar({ name, email }: { name: string | null; email: string }) {
+export function Topbar({
+  name,
+  email,
+  notifications,
+}: {
+  name: string | null;
+  email: string;
+  notifications: NotificationBellCounts;
+}) {
   return (
     <header className="border-border bg-card/85 sticky top-0 z-20 border-b backdrop-blur-sm">
       <div className="flex h-16 items-center gap-3 px-4 sm:px-6 lg:px-8">
@@ -38,14 +48,7 @@ export function Topbar({ name, email }: { name: string | null; email: string }) 
         <SectionLabel className="hidden lg:block" />
 
         <div className="ml-auto flex items-center gap-1.5 sm:gap-2">
-          <ButtonLink
-            variant="ghost"
-            size="icon-sm"
-            aria-label="Notifications"
-            href="/notifications"
-          >
-            <Bell aria-hidden="true" />
-          </ButtonLink>
+          <NotificationBell counts={notifications} />
 
           {/* No Dashboard item — the sidebar two inches away already has one. */}
           <UserMenu name={name} email={email} showDashboardLink={false} />
