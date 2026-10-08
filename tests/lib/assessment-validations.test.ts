@@ -11,7 +11,9 @@ import {
 import {
   EMPTY_ASSESSMENT_FORM,
   assessmentFormSchema,
+  assessmentSnapshotSchema,
   createAssessmentSchema,
+  restoreAssessmentSchema,
   toAssessmentFormValues,
   updateAssessmentSchema,
 } from "@/lib/validations/assessment";
@@ -196,6 +198,70 @@ describe("isOutstanding", () => {
     expect(isOutstanding("COMPLETED")).toBe(false);
     expect(isOutstanding("PASSED")).toBe(false);
     expect(isOutstanding("FAILED")).toBe(false);
+  });
+});
+
+/**
+ * The undo snapshot (DESIGN.md §8).
+ *
+ * The deadline is the interesting field: it is a calendar day stored as midnight
+ * UTC, and a snapshot's job is to carry that exact instant back rather than to
+ * re-decide which day it stands for.
+ */
+describe("assessmentSnapshotSchema", () => {
+  const snapshot = {
+    id: "cl_assessment",
+    applicationId: "cl_app",
+    name: "HackerRank screen",
+    provider: "HackerRank",
+    url: "https://hackerrank.com/test/abc123",
+    deadline: new Date("2026-10-14T00:00:00.000Z"),
+    status: "PENDING" as const,
+    score: "180/200",
+    notes: null,
+    createdAt: new Date("2026-10-08T00:00:00.000Z"),
+  };
+
+  it("survives the JSON round trip, deadline included", () => {
+    const overTheWire: unknown = JSON.parse(JSON.stringify(snapshot));
+    const parsed = assessmentSnapshotSchema.parse(overTheWire);
+
+    expect(parsed.deadline).toBeInstanceOf(Date);
+    // Still midnight UTC on the 14th: the day has not moved.
+    expect(parsed.deadline?.toISOString()).toBe("2026-10-14T00:00:00.000Z");
+  });
+
+  it("keeps a null deadline null rather than turning it into the epoch", () => {
+    expect(assessmentSnapshotSchema.parse({ ...snapshot, deadline: null }).deadline).toBeNull();
+  });
+
+  it("refuses a URL that is not http or https", () => {
+    // Rendered as a link on the assessment row, so the scheme has to be checked
+    // on the way back in as well as on the form.
+    expect(
+      assessmentSnapshotSchema.safeParse({ ...snapshot, url: "javascript:alert(1)" }).success,
+    ).toBe(false);
+
+    expect(assessmentSnapshotSchema.safeParse({ ...snapshot, url: null }).success).toBe(true);
+  });
+
+  it("rejects a status outside the enum and a blank name", () => {
+    expect(assessmentSnapshotSchema.safeParse({ ...snapshot, status: "SKIPPED" }).success).toBe(
+      false,
+    );
+
+    expect(assessmentSnapshotSchema.safeParse({ ...snapshot, name: "" }).success).toBe(false);
+  });
+
+  it("carries no userId, so a forged snapshot cannot name an owner", () => {
+    const parsed = assessmentSnapshotSchema.parse({ ...snapshot, userId: "someone-else" });
+
+    expect(parsed).not.toHaveProperty("userId");
+  });
+
+  it("is what the restore endpoint accepts, under a snapshot key", () => {
+    expect(restoreAssessmentSchema.safeParse({ snapshot }).success).toBe(true);
+    expect(restoreAssessmentSchema.safeParse(snapshot).success).toBe(false);
   });
 });
 

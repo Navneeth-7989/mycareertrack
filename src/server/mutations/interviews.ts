@@ -1,5 +1,9 @@
-import { NotFoundError } from "@/lib/api/errors";
-import type { CreateInterviewPayload, InterviewPayload } from "@/lib/validations/interview";
+import { ConflictError, NotFoundError } from "@/lib/api/errors";
+import type {
+  CreateInterviewPayload,
+  InterviewPayload,
+  InterviewSnapshot,
+} from "@/lib/validations/interview";
 
 import { prisma } from "../db";
 
@@ -124,15 +128,61 @@ export async function updateInterview(
   });
 }
 
-export type DeletedInterview = { id: string; applicationId: string };
+/**
+ * Everything an undo needs, which is every column except `userId` — supplied by
+ * the session on the way back — and `updatedAt`, which Prisma owns.
+ *
+ * Spelled as a `select` rather than taken from the model type, so adding a
+ * column to `Interview` and forgetting it here is a compile error at
+ * `restoreInterview` rather than a field that silently stops surviving a delete.
+ */
+const snapshotSelect = {
+  id: true,
+  applicationId: true,
+  type: true,
+  scheduledAt: true,
+  endsAt: true,
+  meetingUrl: true,
+  interviewerName: true,
+  prepNotes: true,
+  notes: true,
+  result: true,
+  createdAt: true,
+} as const;
 
+export type DeletedInterview = {
+  id: string;
+  applicationId: string;
+  snapshot: InterviewSnapshot;
+};
+
+/**
+ * Deletes a round and returns what it would take to put it back (DESIGN.md §8).
+ *
+ * **The delete is real**, as it is for an application: the row is gone when the
+ * request returns, and the ~10-second undo is built on the snapshot rather than
+ * on a deferred request or a `deletedAt` flag. Both alternatives were rejected
+ * for applications and the reasoning carries over unchanged — a held delete
+ * shows the row as gone while it is still there, and a soft-delete column would
+ * put a filter in `listInterviews`, the dashboard's next-up query, the detail
+ * page's panel and every count beside them.
+ *
+ * Deleting is still distinct from marking the round `CANCELLED`. That is a
+ * result, which keeps the row and its place in the history; this is for a round
+ * entered by mistake. The undo window does not blur that — it just means a
+ * misclick costs ten seconds of attention rather than the prep notes.
+ *
+ * No transaction. One row goes, nothing cascades to it, and the snapshot is read
+ * in the statement before the delete — an interview has no children, so there is
+ * no second read that could see a different world.
+ */
 export async function deleteInterview(
   userId: string,
   interviewId: string,
 ): Promise<DeletedInterview> {
   const existing = await prisma.interview.findFirst({
     where: { id: interviewId, userId },
-    select: { id: true, applicationId: true },
+    select: snapshotSelect,
   });
 
   if (!existing) {
@@ -141,5 +191,56 @@ export async function deleteInterview(
 
   await prisma.interview.delete({ where: { id: existing.id } });
 
-  return existing;
+  return { id: existing.id, applicationId: existing.applicationId, snapshot: existing };
+}
+
+/**
+ * Puts a deleted round back, from the snapshot the delete returned.
+ *
+ * **Nothing in the snapshot is trusted for authorization.** It has been through
+ * the browser, so `userId` comes from the session and `applicationId` — the one
+ * field in it that could point somewhere it should not — is re-checked against
+ * that user exactly as `createInterview` checks the id in a create body. Without
+ * that, a forged snapshot would hang a round off a stranger's application.
+ *
+ * A missing application is a `ConflictError` rather than a 404, and the
+ * distinction is the honest one: the id was fine, the world moved. The realistic
+ * cause is the user deleting the application during the undo window — which
+ * cascaded this interview away a second time — and "no longer available" says
+ * that, where "not found" would suggest the Undo button was broken.
+ *
+ * Restoring twice is not an error: the second Undo finds the round already there
+ * and returns it, which is what the user meant by clicking it.
+ */
+export async function restoreInterview(
+  userId: string,
+  snapshot: InterviewSnapshot,
+): Promise<WrittenInterview> {
+  const alreadyThere = await prisma.interview.findFirst({
+    where: { id: snapshot.id, userId },
+    select: { id: true, applicationId: true, scheduledAt: true },
+  });
+
+  if (alreadyThere) {
+    return alreadyThere;
+  }
+
+  const application = await prisma.application.findFirst({
+    where: { id: snapshot.applicationId, userId },
+    select: { id: true },
+  });
+
+  if (!application) {
+    throw new ConflictError("The application this interview belonged to is no longer available");
+  }
+
+  return prisma.interview.create({
+    data: {
+      ...snapshot,
+      applicationId: application.id,
+      // From the session, never from the body (§4, rule 3).
+      userId,
+    },
+    select: { id: true, applicationId: true, scheduledAt: true },
+  });
 }

@@ -3,6 +3,7 @@ import { z } from "zod";
 import { PRIORITIES, type PriorityValue } from "@/lib/constants/application";
 import { toDateInputValue } from "@/lib/utils/date-only";
 import { idSchema, optionalDateOnly, optionalText, requiredText } from "@/lib/validations/fields";
+import { nullableWireDate, wireDate } from "@/lib/validations/snapshot";
 
 /**
  * Task validation (DESIGN.md §3, §6, §7 Phase 3).
@@ -136,3 +137,47 @@ export function toTaskFormValues(source: TaskFormSource): Required<TaskFormValue
     priority: source.priority,
   };
 }
+
+/**
+ * The deleted-task snapshot that powers undo (DESIGN.md §8).
+ *
+ * Two things set this apart from the interview and assessment snapshots.
+ *
+ * **`applicationId` is nullable**, because a standalone task is a real task. The
+ * union puts null first so an absent parent is matched before `idSchema` is ever
+ * tried, and `restoreTask` treats the two cases differently: null means "no
+ * parent", an id means "a parent that must be re-checked".
+ *
+ * **`isCompleted` and `completedAt` are both carried**, which is the only place
+ * in the product where that pair is written from a request body rather than by
+ * `toggleTaskCompletion`. Deleting a finished task and undoing it has to give
+ * back a finished task — dropping the pair would silently put it back on the
+ * to-do list, and dropping just the timestamp would break the invariant
+ * `completedAt IS NOT NULL ⟺ isCompleted` that "tasks completed this week"
+ * divides by. So the invariant is enforced here instead, by a refinement rather
+ * than by trust: a forged snapshot cannot be the thing that breaks it.
+ */
+export const taskSnapshotSchema = z.object({
+  id: idSchema,
+  applicationId: z.union([z.null(), idSchema]),
+  title: z.string().min(1).max(TASK_TITLE_MAX),
+  description: z.string().max(TASK_DESCRIPTION_MAX).nullable(),
+  dueDate: nullableWireDate,
+  priority: z.enum(PRIORITIES),
+  isCompleted: z.boolean(),
+  completedAt: nullableWireDate,
+  createdAt: wireDate,
+});
+
+export type TaskSnapshot = z.output<typeof taskSnapshotSchema>;
+
+/** What `POST /api/tasks/:id/restore` accepts. */
+export const restoreTaskSchema = z.object({
+  snapshot: taskSnapshotSchema.refine(
+    (snapshot) => (snapshot.completedAt !== null) === snapshot.isCompleted,
+    {
+      error: "A task's completion flag and timestamp must agree",
+      path: ["completedAt"],
+    },
+  ),
+});

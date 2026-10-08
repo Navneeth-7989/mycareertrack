@@ -23,6 +23,7 @@ import {
   optionalText,
   requiredText,
 } from "@/lib/validations/fields";
+import { nullableWireDate, nullableWireUrl, wireDate } from "@/lib/validations/snapshot";
 import { optionalUrl } from "@/lib/validations/url";
 
 /**
@@ -388,24 +389,11 @@ function isOfferedCurrency(value: string | null): value is CurrencyValue {
  */
 
 /**
- * A date that has been through `JSON.stringify` and is now an ISO string — or
- * is still a `Date`, when the snapshot never left the server. `z.coerce.date()`
- * accepts both and rejects anything that is not a real date.
+ * The date and URL field builders live in `validations/snapshot` now, shared
+ * with the three Phase 3 snapshots that arrived after this one. See that module
+ * for why a nullable date is a union rather than `.nullable()`, and why a URL
+ * has to be re-checked on the way back in.
  */
-const wireDate = z.coerce.date();
-
-/**
- * The nullable form, written as a union so the null branch is matched *before*
- * coercion is ever attempted.
- *
- * The hazard it guards against is real and silent: `z.coerce.date()` on its own
- * turns `null` into `new Date(null)`, which is the epoch rather than an error —
- * verified, not assumed. A nullable `appliedAt` reaching a bare coercion would
- * come back as 1 January 1970, and that date counts as a submitted application
- * in every rate in §3. `.nullable()` happens to short-circuit the same way; the
- * union says so in the shape rather than relying on a wrapper's ordering.
- */
-const nullableWireDate = z.union([z.null(), wireDate]);
 
 /**
  * Bounds on the child arrays. Not a product limit — a request-size one. These
@@ -420,7 +408,10 @@ export const applicationSnapshotSchema = z.object({
     id: z.string().min(1).max(64),
     companyId: z.string().min(1).max(64),
     jobTitle: z.string().min(1),
-    jobUrl: z.string().nullable(),
+    // `nullableWireUrl`, not `z.string().nullable()`: the detail header renders
+    // this in an `href`, and a snapshot is the only way a string that never went
+    // through `optionalUrl` could get into the column. See `validations/snapshot`.
+    jobUrl: nullableWireUrl,
     location: z.string().nullable(),
     workMode: z.enum(WORK_MODES).nullable(),
     employmentType: z.enum(EMPLOYMENT_TYPES).nullable(),

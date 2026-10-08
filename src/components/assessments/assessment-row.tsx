@@ -143,6 +143,10 @@ export function AssessmentRow({
             successTitle="Assessment deleted"
             successDescription={assessment.name}
             failureMessage="Could not delete that assessment."
+            undo={{
+              restoredTitle: "Assessment restored",
+              failureMessage: "Could not restore that assessment.",
+            }}
           />
         </div>
 

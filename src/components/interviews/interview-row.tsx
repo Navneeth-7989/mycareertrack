@@ -163,6 +163,10 @@ export function InterviewRow({
             }
             successTitle="Interview deleted"
             failureMessage="Could not delete that interview."
+            undo={{
+              restoredTitle: "Interview restored",
+              failureMessage: "Could not restore that interview.",
+            }}
           />
         </div>
 

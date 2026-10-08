@@ -15,6 +15,8 @@ import {
   createInterviewSchema,
   emptyInterviewForm,
   interviewFormSchema,
+  interviewSnapshotSchema,
+  restoreInterviewSchema,
   toInterviewFormValues,
   updateInterviewSchema,
 } from "@/lib/validations/interview";
@@ -273,6 +275,78 @@ describe("the form-posts-raw-values contract", () => {
     const parsed = interviewFormSchema(IST).parse(VALID);
 
     expect(interviewFormSchema(IST).safeParse(parsed).success).toBe(false);
+  });
+});
+
+/**
+ * The undo snapshot (DESIGN.md §8).
+ *
+ * It is the only interview payload that leaves the server and comes back expecting
+ * to be written, so these are mostly about what it must **refuse** — and the
+ * sharpest of those is the meeting URL, which the row renders into an `href`.
+ */
+describe("interviewSnapshotSchema", () => {
+  const snapshot = {
+    id: "cl_interview",
+    applicationId: "cl_app",
+    type: "TECHNICAL",
+    scheduledAt: new Date("2026-10-20T09:30:00.000Z"),
+    endsAt: new Date("2026-10-20T10:30:00.000Z"),
+    meetingUrl: "https://meet.google.com/abc-defg",
+    interviewerName: "Priya",
+    prepNotes: "Revise graphs",
+    notes: null,
+    result: "PENDING" as const,
+    createdAt: new Date("2026-10-08T00:00:00.000Z"),
+  };
+
+  it("survives the JSON round trip it is designed for", () => {
+    // The actual journey: server -> response body -> browser -> request body.
+    // Every Date becomes an ISO string on the way out, so the schema has to read
+    // them back as Dates or the restore writes strings into timestamp columns.
+    const overTheWire: unknown = JSON.parse(JSON.stringify(snapshot));
+    const parsed = interviewSnapshotSchema.parse(overTheWire);
+
+    expect(parsed.scheduledAt).toBeInstanceOf(Date);
+    expect(parsed.scheduledAt.toISOString()).toBe("2026-10-20T09:30:00.000Z");
+    expect(parsed.endsAt?.toISOString()).toBe("2026-10-20T10:30:00.000Z");
+  });
+
+  it("keeps a null endsAt null rather than turning it into the epoch", () => {
+    // The hazard `nullableWireDate` exists for: a bare z.coerce.date() would
+    // read null as 1 January 1970 and put a finished round on the calendar.
+    const parsed = interviewSnapshotSchema.parse({ ...snapshot, endsAt: null });
+
+    expect(parsed.endsAt).toBeNull();
+  });
+
+  it("refuses a meeting URL that is not http or https", () => {
+    // The one snapshot field where lax validation is a vulnerability: this value
+    // goes straight into an href on the interview row.
+    for (const meetingUrl of ["javascript:alert(1)", "data:text/html,<script>", "not a url"]) {
+      expect(interviewSnapshotSchema.safeParse({ ...snapshot, meetingUrl }).success).toBe(false);
+    }
+
+    expect(interviewSnapshotSchema.safeParse({ ...snapshot, meetingUrl: null }).success).toBe(true);
+  });
+
+  it("rejects a type or result outside the enum", () => {
+    expect(interviewSnapshotSchema.safeParse({ ...snapshot, type: "COFFEE_CHAT" }).success).toBe(
+      false,
+    );
+
+    expect(interviewSnapshotSchema.safeParse({ ...snapshot, result: "MAYBE" }).success).toBe(false);
+  });
+
+  it("carries no userId, so a forged snapshot cannot name an owner", () => {
+    const parsed = interviewSnapshotSchema.parse({ ...snapshot, userId: "someone-else" });
+
+    expect(parsed).not.toHaveProperty("userId");
+  });
+
+  it("is what the restore endpoint accepts, under a snapshot key", () => {
+    expect(restoreInterviewSchema.safeParse({ snapshot }).success).toBe(true);
+    expect(restoreInterviewSchema.safeParse(snapshot).success).toBe(false);
   });
 });
 

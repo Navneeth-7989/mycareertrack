@@ -1,7 +1,7 @@
 import type { NextRequest } from "next/server";
 
 import { handleRouteError } from "@/lib/api/errors";
-import { noContent, ok, parseJsonBody } from "@/lib/api/responses";
+import { ok, parseJsonBody } from "@/lib/api/responses";
 import { updateInterviewSchema } from "@/lib/validations/interview";
 import { deleteInterview, updateInterview } from "@/server/mutations/interviews";
 import { requireApiUser } from "@/server/require-user";
@@ -32,12 +32,14 @@ export async function PATCH(
 }
 
 /**
- * A real 204: nothing is derived from an interview and there is no undo, so there
- * is nothing to put in a body. The confirmation dialog is what makes it safe.
+ * A 200 with a body rather than a 204, because the response carries the snapshot
+ * that powers the undo toast (§8) — the same contract as deleting an
+ * application. The confirmation dialog still asks first; the undo is what makes
+ * the answer recoverable.
  *
  * Deleting is distinct from marking the round `CANCELLED` — that is a result,
  * which keeps the row and its history. Delete is for a round that was entered by
- * mistake.
+ * mistake, which is exactly the case an undo window is for.
  */
 export async function DELETE(
   _request: NextRequest,
@@ -47,9 +49,7 @@ export async function DELETE(
     const user = await requireApiUser();
     const { id } = await context.params;
 
-    await deleteInterview(user.id, id);
-
-    return noContent();
+    return ok(await deleteInterview(user.id, id));
   } catch (error) {
     return handleRouteError(error);
   }

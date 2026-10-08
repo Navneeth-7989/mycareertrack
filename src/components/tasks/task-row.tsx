@@ -154,6 +154,10 @@ export function TaskRow({
           successTitle="Task deleted"
           successDescription={task.title}
           failureMessage="Could not delete that task."
+          undo={{
+            restoredTitle: "Task restored",
+            failureMessage: "Could not restore that task.",
+          }}
         />
       </div>
     </li>

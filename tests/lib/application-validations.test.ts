@@ -702,6 +702,29 @@ describe("applicationSnapshotSchema", () => {
     ).toBe(false);
   });
 
+  it("refuses a job URL that is not http or https", () => {
+    /*
+     * `detail-header` renders this in an `href`, and a snapshot is the only path
+     * into the column that does not go through `optionalUrl` — so the scheme rule
+     * in §8 has to be re-applied here or a restore becomes the way around it.
+     */
+    for (const jobUrl of ["javascript:alert(1)", "data:text/html,<script>", "not a url"]) {
+      expect(
+        applicationSnapshotSchema.safeParse({
+          ...snapshot,
+          application: { ...snapshot.application, jobUrl },
+        }).success,
+      ).toBe(false);
+    }
+
+    expect(
+      applicationSnapshotSchema.safeParse({
+        ...snapshot,
+        application: { ...snapshot.application, jobUrl: "https://careers.example.com/123" },
+      }).success,
+    ).toBe(true);
+  });
+
   it("carries no userId, so a forged snapshot cannot name an owner", () => {
     // Identity comes from the session in `restoreApplication` (§4, rule 3).
     // Anything extra in the body is dropped rather than written.

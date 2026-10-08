@@ -3,6 +3,7 @@ import { z } from "zod";
 import { ASSESSMENT_STATUSES, type AssessmentStatusValue } from "@/lib/constants/assessment";
 import { toDateInputValue } from "@/lib/utils/date-only";
 import { idSchema, optionalDateOnly, optionalText, requiredText } from "@/lib/validations/fields";
+import { nullableWireDate, nullableWireUrl, wireDate } from "@/lib/validations/snapshot";
 import { optionalUrl } from "@/lib/validations/url";
 
 /**
@@ -129,3 +130,38 @@ export function toAssessmentFormValues(
     notes: source.notes ?? "",
   };
 }
+
+/**
+ * The deleted-assessment snapshot that powers undo (DESIGN.md §8).
+ *
+ * `deadline` goes through `nullableWireDate` like every other instant in a
+ * snapshot, and that is **not** a contradiction of this module's date-only
+ * convention. The column holds midnight UTC on the chosen day; a snapshot's job
+ * is to carry that exact instant back, not to re-interpret the day it stands
+ * for. `optionalDateOnly` is for the form, where a user types "2026-03-14" and
+ * something has to decide what instant that means — a decision a restore must
+ * not make a second time.
+ */
+export const assessmentSnapshotSchema = z.object({
+  id: idSchema,
+  /*
+   * Present even though `updateAssessmentSchema` refuses it: a restore has to
+   * know which application to re-attach the row to. `restoreAssessment`
+   * re-checks that the application is this user's, because this value has been
+   * through the browser.
+   */
+  applicationId: idSchema,
+  name: z.string().min(1).max(ASSESSMENT_NAME_MAX),
+  provider: z.string().max(ASSESSMENT_PROVIDER_MAX).nullable(),
+  url: nullableWireUrl,
+  deadline: nullableWireDate,
+  status: z.enum(ASSESSMENT_STATUSES),
+  score: z.string().max(ASSESSMENT_SCORE_MAX).nullable(),
+  notes: z.string().max(ASSESSMENT_NOTES_MAX).nullable(),
+  createdAt: wireDate,
+});
+
+export type AssessmentSnapshot = z.output<typeof assessmentSnapshotSchema>;
+
+/** What `POST /api/assessments/:id/restore` accepts. */
+export const restoreAssessmentSchema = z.object({ snapshot: assessmentSnapshotSchema });

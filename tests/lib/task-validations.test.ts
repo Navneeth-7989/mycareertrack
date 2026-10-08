@@ -3,7 +3,9 @@ import { describe, expect, it } from "vitest";
 import {
   EMPTY_TASK_FORM,
   createTaskSchema,
+  restoreTaskSchema,
   taskFormSchema,
+  taskSnapshotSchema,
   toTaskFormValues,
   toggleTaskCompletionSchema,
   updateTaskSchema,
@@ -168,5 +170,83 @@ describe("the form-posts-raw-values contract", () => {
     const parsed = taskFormSchema.parse(VALID);
 
     expect(taskFormSchema.safeParse(parsed).success).toBe(false);
+  });
+});
+
+/**
+ * The undo snapshot (DESIGN.md §8).
+ *
+ * Two things are specific to tasks: the parent may legitimately be null, and this
+ * is the only request in the product that writes `isCompleted` and `completedAt`
+ * together — everywhere else that pair is maintained by `toggleTaskCompletion`.
+ * The invariant between them is therefore enforced on the way in.
+ */
+describe("taskSnapshotSchema", () => {
+  const snapshot = {
+    id: "cl_task",
+    applicationId: "cl_app",
+    title: "Follow up with the recruiter",
+    description: "Ask about the take-home deadline",
+    dueDate: new Date("2026-10-10T00:00:00.000Z"),
+    priority: "HIGH" as const,
+    isCompleted: false,
+    completedAt: null,
+    createdAt: new Date("2026-10-08T00:00:00.000Z"),
+  };
+
+  it("survives the JSON round trip it is designed for", () => {
+    const overTheWire: unknown = JSON.parse(JSON.stringify(snapshot));
+    const parsed = taskSnapshotSchema.parse(overTheWire);
+
+    expect(parsed.dueDate).toBeInstanceOf(Date);
+    expect(parsed.dueDate?.toISOString()).toBe("2026-10-10T00:00:00.000Z");
+    expect(parsed.completedAt).toBeNull();
+  });
+
+  it("accepts a standalone task, because a null parent is a real task", () => {
+    const parsed = taskSnapshotSchema.parse({ ...snapshot, applicationId: null });
+
+    expect(parsed.applicationId).toBeNull();
+  });
+
+  it("carries no userId, so a forged snapshot cannot name an owner", () => {
+    const parsed = taskSnapshotSchema.parse({ ...snapshot, userId: "someone-else" });
+
+    expect(parsed).not.toHaveProperty("userId");
+  });
+
+  it("restores a finished task as finished", () => {
+    const done = {
+      ...snapshot,
+      isCompleted: true,
+      completedAt: new Date("2026-10-09T12:00:00.000Z"),
+    };
+
+    const result = restoreTaskSchema.safeParse({ snapshot: done });
+
+    expect(result.success).toBe(true);
+    expect(result.data?.snapshot.completedAt?.toISOString()).toBe("2026-10-09T12:00:00.000Z");
+  });
+
+  it("refuses a completion flag and timestamp that disagree", () => {
+    /*
+     * `completedAt IS NOT NULL <=> isCompleted` is the invariant that makes
+     * "tasks completed this week" countable. A restore is the one request that
+     * could break it, so both directions are refused rather than repaired.
+     */
+    const flagWithoutStamp = { ...snapshot, isCompleted: true, completedAt: null };
+    const stampWithoutFlag = {
+      ...snapshot,
+      isCompleted: false,
+      completedAt: new Date("2026-10-09T12:00:00.000Z"),
+    };
+
+    expect(restoreTaskSchema.safeParse({ snapshot: flagWithoutStamp }).success).toBe(false);
+    expect(restoreTaskSchema.safeParse({ snapshot: stampWithoutFlag }).success).toBe(false);
+  });
+
+  it("is what the restore endpoint accepts, under a snapshot key", () => {
+    expect(restoreTaskSchema.safeParse({ snapshot }).success).toBe(true);
+    expect(restoreTaskSchema.safeParse(snapshot).success).toBe(false);
   });
 });

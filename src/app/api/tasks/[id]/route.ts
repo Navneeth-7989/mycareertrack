@@ -1,7 +1,7 @@
 import type { NextRequest } from "next/server";
 
 import { handleRouteError } from "@/lib/api/errors";
-import { noContent, ok, parseJsonBody } from "@/lib/api/responses";
+import { ok, parseJsonBody } from "@/lib/api/responses";
 import { updateTaskSchema } from "@/lib/validations/task";
 import { deleteTask, updateTask } from "@/server/mutations/tasks";
 import { requireApiUser } from "@/server/require-user";
@@ -32,6 +32,14 @@ export async function PATCH(
   }
 }
 
+/**
+ * A 200 rather than a 204: the body carries the snapshot the undo toast posts
+ * back to `/restore` (§8).
+ *
+ * The snapshot includes `isCompleted` and `completedAt`, so undoing the deletion
+ * of a finished task gives back a finished task rather than quietly putting it
+ * back on the list.
+ */
 export async function DELETE(
   _request: NextRequest,
   context: RouteContext<"/api/tasks/[id]">,
@@ -40,9 +48,7 @@ export async function DELETE(
     const user = await requireApiUser();
     const { id } = await context.params;
 
-    await deleteTask(user.id, id);
-
-    return noContent();
+    return ok(await deleteTask(user.id, id));
   } catch (error) {
     return handleRouteError(error);
   }

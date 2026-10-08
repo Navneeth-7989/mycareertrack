@@ -16,6 +16,7 @@ import {
   optionalWholeNumber,
   requiredDateTime,
 } from "@/lib/validations/fields";
+import { nullableWireDate, nullableWireUrl, wireDate } from "@/lib/validations/snapshot";
 import { optionalUrl } from "@/lib/validations/url";
 
 /**
@@ -224,3 +225,46 @@ export function toInterviewFormValues(
     result: source.result,
   };
 }
+
+/**
+ * The deleted-interview snapshot that powers undo (DESIGN.md §8).
+ *
+ * **Not a factory, unlike every other schema in this module** — and the exception
+ * proves the rule rather than breaking it. The timezone exists here to turn a
+ * wall clock from `<input type="datetime-local">` into an instant, and a snapshot
+ * has no wall clocks in it: `scheduledAt` left the server as a UTC instant and
+ * comes back as the ISO string `JSON.stringify` made of it. Threading a zone
+ * through would invite someone to use it, and re-interpreting a UTC instant in
+ * `User.timezone` is exactly the bug `utils/date-time` exists to prevent.
+ *
+ * `endsAt` is stored rather than re-derived from a duration, which the create and
+ * update paths do. An undo must put back the row that was there, including an
+ * `endsAt` this app's own form could not have produced.
+ *
+ * Ids are preserved rather than regenerated, as with applications: a restored
+ * round is *the same* round, so nothing that referenced it is left dangling.
+ */
+export const interviewSnapshotSchema = z.object({
+  id: idSchema,
+  /*
+   * In the snapshot even though `updateInterviewSchema` refuses it, because this
+   * is not an edit — a restore has to know which application to hang the row back
+   * off. It crosses the trust boundary, so `restoreInterview` re-checks that the
+   * application is this user's before writing anything.
+   */
+  applicationId: idSchema,
+  type: z.enum(INTERVIEW_TYPES),
+  scheduledAt: wireDate,
+  endsAt: nullableWireDate,
+  meetingUrl: nullableWireUrl,
+  interviewerName: z.string().max(INTERVIEWER_NAME_MAX).nullable(),
+  prepNotes: z.string().max(INTERVIEW_NOTES_MAX).nullable(),
+  notes: z.string().max(INTERVIEW_NOTES_MAX).nullable(),
+  result: z.enum(INTERVIEW_RESULTS),
+  createdAt: wireDate,
+});
+
+export type InterviewSnapshot = z.output<typeof interviewSnapshotSchema>;
+
+/** What `POST /api/interviews/:id/restore` accepts. */
+export const restoreInterviewSchema = z.object({ snapshot: interviewSnapshotSchema });
