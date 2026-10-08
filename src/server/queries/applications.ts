@@ -139,15 +139,63 @@ const detailSelect = {
     orderBy: { createdAt: "asc" },
   },
   /*
+   * The three child collections Phase 3 added. Uncapped, unlike `events`: an
+   * application accumulates a handful of rounds, a couple of assessments and a
+   * few notes, where its timeline grows with every status change. If any of these
+   * ever needs a bound, it needs paging at the same time, and the honest version
+   * of that is a `take`-limit+1 beside a `hasMore` like the timeline's.
+   */
+  interviews: {
+    select: {
+      id: true,
+      type: true,
+      scheduledAt: true,
+      endsAt: true,
+      meetingUrl: true,
+      interviewerName: true,
+      result: true,
+      prepNotes: true,
+      notes: true,
+    },
+    // Chronological, not newest-first. Within one application these are *rounds*
+    // — screen, then technical, then the hiring manager — and reading them in the
+    // order they happen is the only order that tells that story. The timeline is
+    // reversed because it answers "what happened last"; this answers "how far
+    // along am I".
+    orderBy: [{ scheduledAt: "asc" }, { id: "asc" }],
+  },
+  assessments: {
+    select: {
+      id: true,
+      name: true,
+      provider: true,
+      url: true,
+      deadline: true,
+      status: true,
+      score: true,
+      notes: true,
+    },
+    // Soonest deadline first, nulls last — an assessment with a date is the one
+    // that needs attention, so the ones without should not push it down.
+    orderBy: [{ deadline: { sort: "asc", nulls: "last" } }, { id: "desc" }],
+  },
+  notes: {
+    select: { id: true, content: true, createdAt: true, updatedAt: true },
+    // Newest first: a note is a journal entry, and the last thing written is the
+    // thing being looked for.
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+  },
+  /*
    * What a delete would take with it — the cascade preview §8 asks for, counted
    * in the database rather than inferred from the arrays above. It has to be:
    * `events` is capped at `TIMELINE_LIMIT`, so an application with eighty
    * entries would otherwise promise to delete fifty.
    *
-   * All six relations are counted, including the five that are always zero until
-   * Phase 3 builds them. The dialog renders only the non-zero ones, so interviews
-   * and assessments start appearing in the warning the day they can exist,
-   * without anyone having to remember to come back here.
+   * Still counted separately from the arrays above even though three of them are
+   * now fetched in full, because the one that matters most — `events` — is the
+   * capped one, and a preview that counted some relations from arrays and one
+   * from the database would be the kind of inconsistency nobody notices until it
+   * under-reports.
    */
   _count: {
     select: {

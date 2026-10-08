@@ -4,11 +4,16 @@ import { notFound } from "next/navigation";
 
 import { DetailContacts } from "@/components/applications/detail-contacts";
 import { DetailDescription } from "@/components/applications/detail-description";
+import { DetailAssessments } from "@/components/applications/detail-assessments";
 import { DetailFacts } from "@/components/applications/detail-facts";
 import { DetailHeader } from "@/components/applications/detail-header";
+import { DetailInterviews } from "@/components/applications/detail-interviews";
+import { DetailNotes } from "@/components/applications/detail-notes";
 import { DetailStats } from "@/components/applications/detail-stats";
 import { DetailTimeline } from "@/components/applications/detail-timeline";
+import { formatInstantInZone } from "@/lib/utils/date-time";
 import { getApplication } from "@/server/queries/applications";
+import { listLinkableContacts } from "@/server/queries/contacts";
 import { requireUser } from "@/server/require-user";
 
 /**
@@ -68,7 +73,23 @@ export async function generateMetadata({
 
 export default async function ApplicationDetailPage({ params }: PageProps<"/applications/[id]">) {
   const { id } = await params;
-  const application = await loadApplication(id);
+
+  /*
+   * `requireUser()` again, for `timezone` — the interviews panel formats instants
+   * and needs the zone to do it on the server. It is free: `loadApplication` has
+   * already called it this request and both go through the same `cache()`.
+   */
+  const [user, application, linkable] = await Promise.all([
+    requireUser(),
+    loadApplication(id),
+    /*
+     * The contacts not already on this application — the Link picker's options.
+     * Scoped by `userId` inside the query, and fetched unconditionally because the
+     * card renders whether or not anyone is linked. It is a small read and it
+     * cannot leak: an id that is not this user's would come back empty.
+     */
+    requireUser().then((current) => listLinkableContacts(current.id, id)),
+  ]);
 
   if (!application) {
     // Throws, so nothing below runs and `application` stays narrowed. Never
@@ -95,6 +116,36 @@ export default async function ApplicationDetailPage({ params }: PageProps<"/appl
        */}
       <div className="grid gap-6 lg:grid-cols-3 lg:items-start">
         <div className="flex flex-col gap-6 lg:col-span-2">
+          <DetailInterviews
+            applicationId={application.id}
+            interviews={application.interviews}
+            timeZone={user.timezone}
+          />
+
+          <DetailAssessments applicationId={application.id} assessments={application.assessments} />
+
+          <DetailNotes
+            applicationId={application.id}
+            notes={application.notes.map((note) => ({
+              id: note.id,
+              content: note.content,
+              /*
+               * Formatted here, on the server, in the user's timezone — the notes
+               * panel is a client component and must not do this itself. Reading
+               * the browser's zone there would disagree with every other date on
+               * the page, and formatting during hydration would mismatch.
+               */
+              createdLabel: formatInstantInZone(note.createdAt, user.timezone),
+              /*
+               * A second of slack. `updatedAt` is `@updatedAt`, so it is written on
+               * insert as well and can land a millisecond after `createdAt` — a
+               * bare inequality would mark every note "edited" the moment it was
+               * created.
+               */
+              edited: note.updatedAt.getTime() - note.createdAt.getTime() > 1000,
+            }))}
+          />
+
           <DetailTimeline
             applicationId={application.id}
             events={application.events}
@@ -110,14 +161,16 @@ export default async function ApplicationDetailPage({ params }: PageProps<"/appl
           <DetailFacts application={application} />
 
           {/*
-           * Omitted rather than shown empty. An application with no recruiter
-           * has nothing to say here, and "No contacts yet" in a card is a
-           * Phase 3 affordance — there is no way to add one from this page yet,
-           * so the empty state would be a prompt with no button.
+           * Always rendered now. In Phase 2 this was hidden when empty, because
+           * there was no way to add anyone from here and the empty state would
+           * have been a prompt with no button — step 4 gave it the Link control
+           * that makes the prompt worth showing.
            */}
-          {application.contacts.length > 0 ? (
-            <DetailContacts contacts={application.contacts} />
-          ) : null}
+          <DetailContacts
+            applicationId={application.id}
+            contacts={application.contacts}
+            linkable={linkable}
+          />
         </aside>
       </div>
     </div>

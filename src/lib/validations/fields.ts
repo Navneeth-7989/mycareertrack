@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { isDateOnlyString, parseDateOnly } from "@/lib/utils/date-only";
+import { isDateTimeInputString, parseWallClockInZone } from "@/lib/utils/date-time";
 
 /**
  * The field builders every form schema in the app is assembled from.
@@ -100,6 +101,69 @@ export function requiredDateOnly(label: string) {
     .refine((value) => isDateOnlyString(value), { error: `Enter a valid ${label}` })
     .transform((value) => parseDateOnly(value));
 }
+
+/**
+ * An instant the user picks with `<input type="datetime-local">`.
+ *
+ * **Takes the timezone, which is what makes every schema using it a factory
+ * rather than a constant.** There is no way around it: the input holds a wall
+ * clock with no zone attached, so "2026-03-14T15:30" is not an instant until a
+ * zone says which one. Reading it as UTC would store an interview five and a half
+ * hours out for the default user.
+ *
+ * The zone always comes from `User.timezone` on the server — passed down to the
+ * form by the page, and read from the session by the Route Handler — so both
+ * sides agree and the browser never gets a say. See `utils/date-time` for why
+ * that is the right authority.
+ *
+ * Only interviews use this today. It lives here rather than beside them because
+ * it is a *kind of field*, and a reader looking for "how does this app validate a
+ * date" should find all four answers in one file.
+ */
+export function requiredDateTime(label: string, timeZone: string) {
+  return z
+    .string()
+    .trim()
+    .min(1, { error: `${label} is required` })
+    .refine((value) => isDateTimeInputString(value), { error: `Enter a valid ${label}` })
+    .transform((value) => parseWallClockInZone(value, timeZone));
+}
+
+/**
+ * A whole number the user may leave blank — a duration, a count.
+ *
+ * Bounds are required rather than optional, because an unbounded integer from a
+ * request body is how a derived column ends up in the year 40,000. Separators are
+ * stripped first, like `optionalSalary`: people type "1,440".
+ */
+export function optionalWholeNumber(label: string, min: number, max: number) {
+  return z
+    .string()
+    .optional()
+    .transform((value) => (value ?? "").replace(/[,\s]/g, ""))
+    .refine((value) => value === "" || /^\d+$/.test(value), {
+      error: `${label} must be a whole number`,
+    })
+    .refine((value) => value === "" || Number(value) >= min, {
+      error: `${label} must be at least ${min}`,
+    })
+    .refine((value) => value === "" || Number(value) <= max, {
+      error: `${label} must be at most ${max}`,
+    })
+    .transform((value) => (value === "" ? null : Number(value)));
+}
+
+/**
+ * A row id arriving in a request body — the parent an interview or a task is
+ * being attached to.
+ *
+ * Length-bounded rather than pattern-matched. These are cuids today, but the
+ * point of the cap is to keep a megabyte of text out of a `WHERE` clause, not to
+ * police the generator; a stricter pattern would break the day the id scheme
+ * changes and would buy nothing, since ownership is enforced by the query either
+ * way (§4).
+ */
+export const idSchema = z.string().trim().min(1, { error: "Required" }).max(64);
 
 /**
  * Tolerance on dates that must not be in the future.

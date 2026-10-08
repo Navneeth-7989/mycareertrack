@@ -12,8 +12,8 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
-import { DeleteEvent } from "@/components/applications/delete-event";
 import { EventDialog } from "@/components/applications/event-dialog";
+import { ConfirmDelete } from "@/components/shared/confirm-delete";
 import {
   Card,
   CardAction,
@@ -203,7 +203,21 @@ function Entry({
               }}
             />
 
-            <DeleteEvent id={event.id} title={event.title} />
+            <ConfirmDelete
+              endpoint={`/api/events/${event.id}`}
+              triggerLabel={`Delete “${event.title}”`}
+              title="Delete this entry?"
+              description={
+                <>
+                  <strong className="text-foreground font-medium">{event.title}</strong> will be
+                  removed from this application&rsquo;s timeline. Nothing else about the application
+                  changes.
+                </>
+              }
+              successTitle="Entry deleted"
+              successDescription={event.title}
+              failureMessage="Could not delete that entry."
+            />
           </div>
         ) : null}
       </div>

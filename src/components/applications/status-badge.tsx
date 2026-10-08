@@ -1,5 +1,4 @@
-import { cn } from "cn";
-
+import { TonePill, type Tone } from "@/components/shared/tone-pill";
 import {
   APPLICATION_STATUS_LABELS,
   type ApplicationStatusValue,
@@ -26,13 +25,6 @@ import {
  * tint is unreadable on a slate-950 card, and these are the smallest text in
  * the product.
  */
-
-type Tone = {
-  /** Background, border and text for the pill. */
-  pill: string;
-  /** The dot, which carries the hue at full strength. */
-  dot: string;
-};
 
 export const APPLICATION_STATUS_TONES: Record<ApplicationStatusValue, Tone> = {
   SAVED: {
@@ -82,19 +74,9 @@ export function StatusBadge({
   status: ApplicationStatusValue;
   className?: string;
 }) {
-  const tone = APPLICATION_STATUS_TONES[status];
-
   return (
-    <span
-      data-slot="status-badge"
-      className={cn(
-        "inline-flex h-6 w-fit shrink-0 items-center gap-1.5 rounded-full border px-2.5 text-xs font-medium whitespace-nowrap",
-        tone.pill,
-        className,
-      )}
-    >
-      <span aria-hidden="true" className={cn("size-1.5 shrink-0 rounded-full", tone.dot)} />
+    <TonePill tone={APPLICATION_STATUS_TONES[status]} className={className}>
       {APPLICATION_STATUS_LABELS[status]}
-    </span>
+    </TonePill>
   );
 }

@@ -111,6 +111,25 @@ export function todayAsDateOnly(now: Date = new Date()): string {
   return `${now.getFullYear()}-${month}-${day}`;
 }
 
+/**
+ * Midnight UTC today, as a timestamp — the instant a date-only "today" is stored
+ * as.
+ *
+ * This is the boundary every "is it overdue" comparison uses, and it is
+ * deliberately **unzoned**. A date-only value is written as midnight UTC with no
+ * zone attached (see the header), so the thing it must be compared against is
+ * midnight UTC as well. Mixing a zoned "today" into a comparison against unzoned
+ * storage is precisely how an off-by-one-day bug gets in, and a deadline is the
+ * worst place to have one.
+ *
+ * Note the difference from `todayAsDateOnly`, which is the viewer's *local* today
+ * and is correct for "how long ago was this" — a question about the user's
+ * calendar rather than about a stored boundary.
+ */
+export function startOfTodayUtc(now: Date = new Date()): number {
+  return Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+}
+
 /** Milliseconds in a day. Exact, because both operands below are UTC midnight. */
 const DAY_MS = 24 * 60 * 60 * 1000;
 

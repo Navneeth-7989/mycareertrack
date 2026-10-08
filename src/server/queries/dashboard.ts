@@ -1,6 +1,9 @@
 import { ApplicationStatus } from "@prisma/client";
 
 import { prisma } from "../db";
+import { getDueAssessments, type AssessmentListItem } from "./assessments";
+import { getUpcomingInterviews, type InterviewListItem } from "./interviews";
+import { getPressingTasks, type TaskListItem } from "./tasks";
 
 /**
  * The dashboard's headline figures.
@@ -52,6 +55,48 @@ export type DashboardSummary = {
   responseRate: number | null;
   upcomingInterviews: number;
 };
+
+/**
+ * How many rows each dashboard action list shows.
+ *
+ * Small on purpose. These are a prompt to act, not a replacement for the pages they
+ * link to — a dashboard that lists twelve tasks has become the tasks page, badly. Four
+ * is enough to convey "there is a queue here" while fitting three cards across without
+ * any of them scrolling.
+ */
+const ACTION_LIST_SIZE = 4;
+
+export type DashboardActions = {
+  upcomingInterviews: InterviewListItem[];
+  dueAssessments: AssessmentListItem[];
+  /** Overdue and due-today, which is what "pressing" means here. */
+  pressingTasks: TaskListItem[];
+};
+
+/**
+ * The three action lists on the dashboard — the `TODO(phase-3)` the page carried since
+ * Phase 1 (§7: "dashboard action lists wired to real data").
+ *
+ * Each delegates to the query that owns its entity rather than re-deriving the rules
+ * here. That matters more than it looks: "due" for an assessment means outstanding with
+ * a deadline that has arrived, and "pressing" for a task means not done and due by the
+ * end of today — definitions that already exist beside the pages that display them, and
+ * which would drift the moment the dashboard wrote its own copy.
+ *
+ * `Promise.all`, not `$transaction`, per the Neon cold-start reasoning in `db.ts`: three
+ * reads on a page, and a transaction's two-second acquisition budget is shorter than a
+ * suspended database takes to wake. There is also nothing to make consistent — these are
+ * three independent lists, not parts of one figure.
+ */
+export async function getDashboardActions(userId: string): Promise<DashboardActions> {
+  const [upcomingInterviews, dueAssessments, pressingTasks] = await Promise.all([
+    getUpcomingInterviews(userId, ACTION_LIST_SIZE),
+    getDueAssessments(userId, ACTION_LIST_SIZE),
+    getPressingTasks(userId, ACTION_LIST_SIZE),
+  ]);
+
+  return { upcomingInterviews, dueAssessments, pressingTasks };
+}
 
 export async function getDashboardSummary(userId: string): Promise<DashboardSummary> {
   const now = new Date();
