@@ -162,10 +162,15 @@ const detailSelect = {
 } satisfies Prisma.ApplicationSelect;
 
 /**
- * `isAutomatic` is deliberately absent. Nothing writes a manual event yet, so
- * every row would come back `true` and the column would be data the page
- * fetched and never read. Phase 3 adds it back alongside the manual entries it
- * is there to distinguish.
+ * `isAutomatic` is here now, which it was not in Phase 2 — nothing wrote a
+ * manual event then, so every row came back `true` and the column would have
+ * been data the page fetched and never read.
+ *
+ * It earns its place by deciding what the timeline renders *controls* for. Only
+ * a manual entry can be edited or deleted (see `mutations/events`), so this is
+ * what the UI reads to decide whether an entry gets an Edit and a Delete button.
+ * The server enforces the same rule independently; this is the flag that keeps
+ * the page from offering an action that would be refused.
  */
 const timelineSelect = {
   id: true,
@@ -173,6 +178,7 @@ const timelineSelect = {
   title: true,
   description: true,
   occurredAt: true,
+  isAutomatic: true,
 } satisfies Prisma.ApplicationEventSelect;
 
 export type ApplicationTimelineEvent = Prisma.ApplicationEventGetPayload<{

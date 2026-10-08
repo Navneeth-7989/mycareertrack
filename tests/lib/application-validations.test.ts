@@ -177,6 +177,33 @@ describe("dates", () => {
 
     expect(fails({ status: "APPLIED", appliedAt: local }).success).toBe(true);
   });
+
+  /*
+   * A regression. Zod 4 runs the object's `superRefine` even when a field has
+   * already failed its own check, and hands the rule the *untransformed* input
+   * — so a malformed date reached `applicationCrossFieldRules` as a string while
+   * the types promised a `Date`, and `.getTime()` threw a `TypeError` out of the
+   * middle of parsing.
+   *
+   * The damage was not the throw itself but where it landed: `handleRouteError`
+   * does not recognise it, so `POST /api/applications` answered **500 with a
+   * generic message** for input whose correct answer is a 400 naming the field.
+   * Unreachable from the date input, which only emits ISO dates or "", and
+   * therefore invisible until something posted a hand-written body.
+   *
+   * The guard lives in `isFutureDateOnly`, so this holds for every schema that
+   * checks a date against the future.
+   */
+  it.each([
+    { name: "a malformed date", value: "14-03-2026" },
+    { name: "a date that does not exist", value: "2026-02-31" },
+    { name: "a non-date string", value: "tomorrow" },
+  ])("reports $name as a field error rather than throwing", ({ value }) => {
+    const result = fails({ status: "APPLIED", appliedAt: value });
+
+    expect(result.success).toBe(false);
+    expect(result.error?.issues.map((issue) => issue.path.join("."))).toEqual(["appliedAt"]);
+  });
 });
 
 describe("the recruiter block", () => {

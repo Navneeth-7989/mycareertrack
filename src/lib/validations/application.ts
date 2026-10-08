@@ -14,8 +14,15 @@ import {
 } from "@/lib/constants/application";
 import { EVENT_TYPES } from "@/lib/constants/event";
 import { WORK_MODES, type WorkModeValue } from "@/lib/constants/work-mode";
-import { isDateOnlyString, parseDateOnly, toDateInputValue } from "@/lib/utils/date-only";
+import { toDateInputValue } from "@/lib/utils/date-only";
 import { companyNameSchema } from "@/lib/validations/company";
+import {
+  isFutureDateOnly,
+  optionalDateOnly,
+  optionalEnum,
+  optionalText,
+  requiredText,
+} from "@/lib/validations/fields";
 import { optionalUrl } from "@/lib/validations/url";
 
 /**
@@ -53,54 +60,13 @@ const CONTACT_PHONE_MAX = 30;
 const SALARY_MAX = 999_999_999;
 
 /**
- * Tolerance on "applied on" dates in the future.
- *
- * One day, not zero: the value is stored as midnight UTC on the chosen day
- * (see `utils/date-only`), so a user in Asia/Kolkata picking "today" late in
- * the evening produces an instant that is already tomorrow in UTC. Zero
- * tolerance would reject today's date for everyone east of Greenwich.
- */
-const APPLIED_AT_FUTURE_TOLERANCE_MS = 24 * 60 * 60 * 1000;
-
-function requiredText(label: string, max: number) {
-  return z
-    .string()
-    .trim()
-    .min(1, { error: `${label} is required` })
-    .max(max, { error: `${label} must be at most ${max} characters` });
-}
-
-/** Blank becomes null, never "" — the reasoning is in `validations/profile`. */
-function optionalText(label: string, max: number) {
-  return z
-    .string()
-    .optional()
-    .transform((value) => (value ?? "").trim())
-    .refine((value) => value.length <= max, {
-      error: `${label} must be at most ${max} characters`,
-    })
-    .transform((value) => (value === "" ? null : value));
-}
-
-/**
- * An enum field the user may leave alone. A `<select>` with no choice made
- * submits "", and absent means the same thing — both become null rather than
- * being rejected or stored as an empty string in an enum column.
- */
-function optionalEnum<const T extends readonly [string, ...string[]]>(values: T, label: string) {
-  return z
-    .union([z.enum(values), z.literal("")])
-    .optional()
-    .refine((value) => value === undefined || value === "" || values.includes(value), {
-      error: `Choose a valid ${label}`,
-    })
-    .transform((value) => (value === undefined || value === "" ? null : value));
-}
-
-/**
  * A money amount as typed. "12,00,000" and "1 200 000" are what people
  * actually enter, so separators are stripped before the digits are checked
  * rather than being rejected as invalid input.
+ *
+ * The only field builder still local to this module: salary is the one shape no
+ * other entity has. The generic four live in `validations/fields`, shared with
+ * the six entities Phase 3 adds.
  */
 function optionalSalary(label: string) {
   return z
@@ -114,22 +80,6 @@ function optionalSalary(label: string) {
       error: `${label} is larger than this field can store`,
     })
     .transform((value) => (value === "" ? null : Number(value)));
-}
-
-/**
- * A calendar day. Past dates are accepted everywhere this is used — §8 is
- * explicit that a deadline in the past is allowed and merely flagged, because
- * people log things late.
- */
-function optionalDateOnly(label: string) {
-  return z
-    .string()
-    .optional()
-    .transform((value) => (value ?? "").trim())
-    .refine((value) => value === "" || isDateOnlyString(value), {
-      error: `Enter a valid ${label}`,
-    })
-    .transform((value) => (value === "" ? null : parseDateOnly(value)));
 }
 
 const recruiterEmail = z
@@ -217,7 +167,7 @@ export function applicationCrossFieldRules(
   // A date you applied on cannot be in the future. Unlike a past deadline,
   // which is normal, this is always a typo — and it would distort the
   // applications-over-time chart in Phase 4 rather than just looking odd.
-  if (value.appliedAt && value.appliedAt.getTime() - Date.now() > APPLIED_AT_FUTURE_TOLERANCE_MS) {
+  if (value.appliedAt && isFutureDateOnly(value.appliedAt)) {
     ctx.addIssue({
       code: "custom",
       path: ["appliedAt"],
