@@ -12,6 +12,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Field, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { RATE_LIMITED_SIGNIN_CODE } from "@/lib/constants/rate-limit";
 import { credentialsSignInSchema } from "@/lib/validations/auth";
 
 type FormValues = z.input<typeof credentialsSignInSchema>;
@@ -28,6 +29,16 @@ type FormValues = z.input<typeof credentialsSignInSchema>;
  */
 const SIGN_IN_FAILED =
   "Invalid email or password. If you created this account with Google or GitHub, use one of the buttons above.";
+
+/**
+ * The one credentials failure that gets its own message (DESIGN.md §6).
+ *
+ * No duration in the copy, because the client is not told one — see
+ * `RateLimitedSignin` in server/auth.ts. "A few minutes" is honest about a
+ * fifteen-minute window without inviting someone to time it.
+ */
+const RATE_LIMITED =
+  "Too many sign-in attempts from this device. Wait a few minutes and try again.";
 
 /**
  * Maps the `?error=` codes Auth.js sends to pages.error. Everything unlisted
@@ -68,7 +79,14 @@ export function LoginForm({
     const result = await signIn("credentials", { ...values, redirect: false });
 
     if (result.error) {
-      setFormError(SIGN_IN_FAILED);
+      /*
+       * `result.code` is the `code` from the thrown `CredentialsSignin`.
+       * Anything unrecognised — including the code being absent, which is what
+       * an older Auth.js or a proxied response could produce — falls through to
+       * the generic message, so a missing code degrades to today's behaviour
+       * rather than to no message at all.
+       */
+      setFormError(result.code === RATE_LIMITED_SIGNIN_CODE ? RATE_LIMITED : SIGN_IN_FAILED);
       return;
     }
 

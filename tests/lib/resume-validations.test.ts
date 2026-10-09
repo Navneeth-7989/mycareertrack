@@ -302,7 +302,10 @@ describe("formatFileSize", () => {
     expect(formatFileSize(1024)).toBe("1 KB");
     expect(formatFileSize(254_000)).toBe("248 KB");
     expect(formatFileSize(1024 * 1024)).toBe("1.0 MB");
-    expect(formatFileSize(RESUME_MAX_BYTES)).toBe("5.0 MB");
+    // The cap is quoted to the user through this function, so the assertion is
+    // on the rendered string rather than on the constant: "4.0 MB" is what the
+    // upload dialog, the empty state and the route's refusal all say.
+    expect(formatFileSize(RESUME_MAX_BYTES)).toBe("4.0 MB");
   });
 
   it("does not crash on a nonsense size", () => {

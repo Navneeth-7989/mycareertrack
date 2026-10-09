@@ -74,20 +74,37 @@ export function canPreviewResume(mimeType: string): boolean {
 }
 
 /**
- * 5 MB, as §6 specifies.
+ * 4 MB — lowered from §6's 5 MB in Phase 5, deliberately and with the design
+ * updated to match.
  *
- * Comfortably above any real resume — a text-heavy two-page PDF is well under a
- * megabyte — and the cases that exceed it are a scanned document or an embedded
+ * **The number is the platform's, not a judgement about resumes.** Vercel
+ * refuses a serverless function's request body over 4.5 MB *before the function
+ * runs*, and this upload goes through our own route so the MIME and magic-byte
+ * checks in §6 can happen before a byte is stored. At 5 MB the app therefore
+ * advertised a cap it could not honour: a 4.6 MB PDF passed every check locally
+ * and came back from production as the platform's own 413, with none of our
+ * copy and nothing in the field under the picker. A limit that is wrong in the
+ * direction of accepting too much is worse than a smaller one, because the
+ * failure lands on the user as an unexplained error.
+ *
+ * 4 rather than 4.4: the margin covers the multipart envelope — boundaries, the
+ * `label` field, headers — which all count toward the platform's limit and the
+ * file does not.
+ *
+ * Still comfortably above any real resume. A text-heavy two-page PDF is well
+ * under a megabyte; what exceeds 4 MB is a scanned document or an embedded
  * image, both of which a recruiter would rather receive smaller anyway.
  *
- * **One constant, because Phase 5 may have to lower it.** Vercel caps a serverless
- * function's *request* body at 4.5 MB, and this upload goes through our own route
- * so that the MIME and magic-byte checks in §6 can run server-side before
- * anything is stored. A 5 MB file therefore uploads locally but would be refused
- * by the platform in production — see the note on `POST /api/resumes`, which is
- * where the decision between a smaller cap and a signed-upload-URL flow belongs.
+ * The rejected alternative, so it is not re-proposed: a signed Supabase upload
+ * URL would keep 5 MB, but it puts the file in the bucket before the signature
+ * check can run, which inverts the order §6 requires and would need a
+ * post-upload verification sweep to get back to where the route already is.
+ *
+ * One constant, and the copy quotes it. The upload dialog, the page's helper
+ * text and the route's refusal all call `formatFileSize(RESUME_MAX_BYTES)`, so
+ * this line is the only place the number exists.
  */
-export const RESUME_MAX_BYTES = 5 * 1024 * 1024;
+export const RESUME_MAX_BYTES = 4 * 1024 * 1024;
 
 /** "Frontend Resume" — the user's name for a version, not the file's name. */
 export const RESUME_LABEL_MAX = 100;

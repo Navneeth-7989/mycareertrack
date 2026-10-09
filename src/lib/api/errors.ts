@@ -40,12 +40,21 @@ export class AppError extends Error {
   readonly status: number;
   readonly fields?: FieldErrors;
   readonly confirmation?: ConfirmationDetails;
+  /**
+   * Seconds to put in a `Retry-After` header, when the error is one a client
+   * may usefully retry. Only `RateLimitError` sets it.
+   */
+  readonly retryAfterSeconds?: number;
 
   constructor(
     code: ErrorCode,
     status: number,
     message: string,
-    options: { fields?: FieldErrors; confirmation?: ConfirmationDetails } = {},
+    options: {
+      fields?: FieldErrors;
+      confirmation?: ConfirmationDetails;
+      retryAfterSeconds?: number;
+    } = {},
   ) {
     super(message);
     this.name = new.target.name;
@@ -53,6 +62,7 @@ export class AppError extends Error {
     this.status = status;
     this.fields = options.fields;
     this.confirmation = options.confirmation;
+    this.retryAfterSeconds = options.retryAfterSeconds;
   }
 }
 
@@ -103,7 +113,27 @@ export class NotFoundError extends AppError {
 
 export class ConflictError extends AppError {
   constructor(message: string, fields?: FieldErrors) {
-    super("CONFLICT", 409, message, fields);
+    // `{ fields }`, not `fields`. This passed the bare record as the whole
+    // options object until Phase 5 step 3, which meant `options.fields` was
+    // undefined and per-field messages on a 409 vanished silently — a form
+    // showing a banner where it should have shown a line under the input.
+    // Nothing had passed them yet, so nothing was visibly broken; the first
+    // caller to try would have been debugging the wrong half.
+    super("CONFLICT", 409, message, { fields });
+  }
+}
+
+/**
+ * A 429 (DESIGN.md §6). Carries the seconds until the window reopens, which
+ * `handleRouteError` puts in a `Retry-After` header as well as in the message.
+ *
+ * The header is for clients and the sentence is for people; both come from one
+ * number so they cannot disagree. See `lib/constants/rate-limit` for why the
+ * number is deliberately coarse.
+ */
+export class RateLimitError extends AppError {
+  constructor(message: string, retryAfterSeconds: number) {
+    super("RATE_LIMITED", 429, message, { retryAfterSeconds });
   }
 }
 
@@ -138,6 +168,7 @@ export function handleRouteError(error: unknown): Response {
     return errorResponse(error.status, error.code, error.message, {
       fields: error.fields,
       confirmation: error.confirmation,
+      retryAfterSeconds: error.retryAfterSeconds,
     });
   }
 
@@ -162,7 +193,11 @@ function errorResponse(
   status: number,
   code: ErrorCode,
   message: string,
-  extras: { fields?: FieldErrors; confirmation?: ConfirmationDetails } = {},
+  extras: {
+    fields?: FieldErrors;
+    confirmation?: ConfirmationDetails;
+    retryAfterSeconds?: number;
+  } = {},
 ): Response {
   return Response.json(
     {
@@ -173,6 +208,14 @@ function errorResponse(
         ...(extras.confirmation ? { confirmation: extras.confirmation } : {}),
       },
     },
-    { status },
+    {
+      status,
+      // The one header any error in this app sets. It is a standard field with
+      // a standard meaning, so a well-behaved client backs off correctly
+      // without having to know our envelope at all.
+      headers: extras.retryAfterSeconds
+        ? { "Retry-After": String(extras.retryAfterSeconds) }
+        : undefined,
+    },
   );
 }

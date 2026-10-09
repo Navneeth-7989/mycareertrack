@@ -5,11 +5,13 @@ import {
   parseJsonBody,
   parseSearchParams,
 } from "@/lib/api/responses";
+import { RATE_LIMITS } from "@/lib/constants/rate-limit";
 import { createApplicationRequestSchema } from "@/lib/validations/application";
 import { applicationFiltersSchema } from "@/lib/validations/application-filters";
 import { createApplication } from "@/server/mutations/applications";
 import { listApplications } from "@/server/queries/applications";
 import { requireApiUser } from "@/server/require-user";
+import { enforceRateLimit } from "@/server/services/rate-limit";
 
 /**
  * GET /api/applications — the filtered, sorted, paginated list (DESIGN.md §6).
@@ -61,11 +63,24 @@ export async function GET(request: Request): Promise<Response> {
  * the request schema has no `userId` field, so a client cannot nominate whose
  * application it is creating (§8).
  *
- * TODO(phase-5): 100 creates/hour per user, per the rate-limit table in §6.
+ * **100 creates per hour per user (§6).** Set where it is for what this write
+ * costs rather than for what a person does: it resolves a company, may create a
+ * contact, writes a timeline event, and runs the duplicate check, all in one
+ * transaction. A hundred an hour is far above the heaviest real use — a day
+ * spent applying is a few dozen — and far below what a loop could do to the
+ * connection pool. The limit is keyed on the user id from the session, so
+ * unlike the two IP limits there is nothing a request can do to choose its own
+ * bucket (§4 rule 3).
  */
 export async function POST(request: Request): Promise<Response> {
   try {
     const user = await requireApiUser();
+
+    // Before the body is read, so a flood is refused without paying for its
+    // parse or its company resolution. The register route documents why it is
+    // the one that does this the other way round.
+    await enforceRateLimit(RATE_LIMITS.applicationCreate, user.id);
+
     const payload = await parseJsonBody(request, createApplicationRequestSchema);
 
     const { warnings, ...application } = await createApplication(user.id, payload);

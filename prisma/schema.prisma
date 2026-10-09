@@ -606,3 +606,45 @@ model Notification {
   @@unique([userId, type, entityId])
   @@index([userId, isRead, triggerAt])
 }
+
+// ---------------------------------------------------------------------------
+// RateLimit
+//
+// The counters behind the limit table in docs/DESIGN.md §6. Postgres-backed
+// because §2 rejected Redis at this scale: one more hosted service to configure
+// and pay for, to hold five counters that a table and one statement already
+// hold correctly.
+//
+// A composite primary key and no surrogate id, which is unlike every other
+// model here. Two reasons, both load-bearing rather than tidiness: the key *is*
+// the natural identity of a counter (one bucket, one window), and the limiter
+// is a single `INSERT ... ON CONFLICT DO UPDATE` whose conflict target has to
+// be a real constraint. A cuid default could not be used by that statement
+// anyway, since a raw INSERT does not get Prisma's client-side defaults.
+//
+// There is no relation to User. A bucket key is a string the limiter builds —
+// sometimes a user id, sometimes an email and an IP, sometimes neither — so a
+// foreign key could not cover every case, and one that covered only some would
+// invite reading this table as an audit log of who did what. It is a counter,
+// it is swept on a timer, and nothing reads it but the limiter.
+// ---------------------------------------------------------------------------
+
+model RateLimit {
+  /// "{limit name}:{subject}" — see lib/constants/rate-limit.ts. Opaque here.
+  bucket String
+
+  /// Clock-aligned start of the fixed window, so concurrent callers agree on it
+  /// without coordinating.
+  windowStart DateTime
+
+  count Int @default(1)
+
+  /// The window's end, which is also when the row becomes sweepable: a bucket
+  /// is spent the moment its window closes.
+  expiresAt DateTime
+
+  @@id([bucket, windowStart])
+  // For the sweep, which is the only query in the app that reads this table
+  // without knowing a bucket.
+  @@index([expiresAt])
+}

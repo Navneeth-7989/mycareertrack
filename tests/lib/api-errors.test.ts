@@ -4,6 +4,7 @@ import {
   ConfirmationRequiredError,
   ConflictError,
   NotFoundError,
+  RateLimitError,
   ValidationError,
   handleRouteError,
 } from "@/lib/api/errors";
@@ -58,6 +59,61 @@ describe("handleRouteError", () => {
     expect(parsed.message).toBe("Something went wrong. Please try again.");
     expect(parsed.message).not.toContain("10.0.0.5");
   });
+
+  /**
+   * Added by the Phase 5 error-shape audit. `services/resume-storage.ts` throws
+   * plain `Error`s whose text carries Supabase's own message, the bucket name
+   * and the storage path — and a storage path **begins with the owner's user
+   * id**. They are plain Errors rather than `AppError`s precisely so this
+   * branch handles them, which is correct but entirely implicit: anyone
+   * "improving" one of those into a `ConflictError` to get a better status code
+   * would publish a user id in a response body. This is the test that would
+   * fail if they did.
+   */
+  it("does not leak a storage error's bucket, path or user id", async () => {
+    const storageError = new Error(
+      "[storage] could not sign resume url: Object not found in bucket resumes at " +
+        "cmush621p000014uy8vwbp0tw/9f1c2b3a-4d5e.pdf",
+    );
+
+    const { status, parsed } = await roundTrip(storageError);
+
+    expect(status).toBe(500);
+    expect(parsed.message).toBe("Something went wrong. Please try again.");
+
+    const body = JSON.stringify(parsed);
+
+    expect(body).not.toContain("cmush621p000014uy8vwbp0tw");
+    expect(body).not.toContain("resumes");
+    expect(body).not.toContain(".pdf");
+  });
+
+  /**
+   * The same guarantee stated as a property rather than per case: the only text
+   * that ever reaches a client is text we wrote. An `AppError`'s message is
+   * ours by construction; everything else is replaced.
+   */
+  it("replaces the message of every error it did not author", async () => {
+    const foreign = [
+      new Error("Invalid `prisma.application.findFirst()` invocation in /var/task/.next/server"),
+      Object.assign(new Error("Unique constraint failed on the fields: (`userId`,`email`)"), {
+        code: "P2002",
+      }),
+      Object.assign(new Error("An operation failed because it depends on one or more records"), {
+        code: "P2025",
+      }),
+      "a thrown string",
+      { message: "a thrown object" },
+      null,
+    ];
+
+    for (const error of foreign) {
+      const { parsed } = await roundTrip(error);
+      const body = JSON.stringify(parsed);
+
+      expect(body).not.toMatch(/prisma|constraint|\/var\/task|userId/i);
+    }
+  });
 });
 
 describe("ConfirmationRequiredError", () => {
@@ -85,6 +141,66 @@ describe("ConfirmationRequiredError", () => {
     expect(plain.status).toBe(409);
     expect(plain.parsed.code).toBe("CONFLICT");
     expect(plain.parsed.confirmation).toBeUndefined();
+  });
+});
+
+describe("ConflictError", () => {
+  /**
+   * A regression test for the bug Phase 5 step 3's error-shape audit found: the
+   * constructor passed `fields` as the whole options object, so `options.fields`
+   * was undefined and a 409's per-field messages vanished between the throw and
+   * the response. Nothing passed them yet, which is why nothing looked broken —
+   * the first caller to try would have been debugging the form.
+   */
+  it("carries its field errors through to the response", async () => {
+    const { status, parsed } = await roundTrip(
+      new ConflictError("A contact with that email already exists", {
+        email: "You already have a contact with this email",
+      }),
+    );
+
+    expect(status).toBe(409);
+    expect(parsed.code).toBe("CONFLICT");
+    expect(parsed.fields).toEqual({ email: "You already have a contact with this email" });
+  });
+
+  it("omits fields when there are none", async () => {
+    const { parsed } = await roundTrip(new ConflictError("That record already exists"));
+
+    expect(parsed.fields).toEqual({});
+  });
+});
+
+describe("RateLimitError", () => {
+  it("is a 429 whose Retry-After matches the message", async () => {
+    const response = handleRouteError(
+      new RateLimitError("Too many searches. Try again in a minute.", 42),
+    );
+    const parsed = await readApiError(response.clone());
+
+    expect(response.status).toBe(429);
+    expect(parsed.code).toBe("RATE_LIMITED");
+    expect(parsed.message).toBe("Too many searches. Try again in a minute.");
+    // The header is for clients and the sentence is for people; both come from
+    // one number, so a client backing off cannot be told something different
+    // from what the user was shown.
+    expect(response.headers.get("Retry-After")).toBe("42");
+  });
+
+  /**
+   * The header is only set when there is something to retry after. A stray
+   * `Retry-After` on an unrelated error would tell a well-behaved client to
+   * back off from a 400 it should fix instead.
+   */
+  it("is the only error that sets the header", async () => {
+    for (const error of [
+      new ValidationError({ jobTitle: "Required" }),
+      new NotFoundError(),
+      new ConflictError("That record already exists"),
+      new Error("boom"),
+    ]) {
+      expect(handleRouteError(error).headers.get("Retry-After")).toBeNull();
+    }
   });
 });
 

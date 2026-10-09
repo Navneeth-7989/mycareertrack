@@ -2,6 +2,7 @@ import type { NextRequest } from "next/server";
 
 import { ValidationError, handleRouteError } from "@/lib/api/errors";
 import { created, ok, parseFormFields } from "@/lib/api/responses";
+import { RATE_LIMITS } from "@/lib/constants/rate-limit";
 import { RESUME_MAX_BYTES } from "@/lib/constants/resume";
 import { formatFileSize } from "@/lib/utils/file-size";
 import {
@@ -13,6 +14,7 @@ import {
 import { createResume } from "@/server/mutations/resumes";
 import { listResumes } from "@/server/queries/resumes";
 import { requireApiUser } from "@/server/require-user";
+import { enforceRateLimit } from "@/server/services/rate-limit";
 
 /**
  * `/api/resumes` — list and upload (DESIGN.md §6).
@@ -48,20 +50,30 @@ export async function GET(): Promise<Response> {
  * and MIME type — so a file called `cv.pdf.exe` is stored as a `.pdf` because its
  * bytes are a PDF, and the name it arrived with has no say in where it goes.
  *
- * **One deployment caveat, which Phase 5's ship step has to settle.** Vercel caps
- * a serverless function's request body at 4.5 MB, below the 5 MB this endpoint
- * enforces — so the largest accepted files upload locally and would be refused by
- * the platform in production. The two ways out are lowering `RESUME_MAX_BYTES`,
- * or having the browser upload to a signed Supabase URL and post only the
- * metadata here. The second keeps the 5 MB but gives up checking the bytes before
- * they are stored, which is the §6 requirement this route is built around, so it
- * would need a post-upload verification pass. Neither is a Phase 4 decision.
+ * **The Vercel body-size caveat was settled in Phase 5: the cap is 4 MB.** The
+ * platform refuses a request body over 4.5 MB before this function runs, so a
+ * cap above that was a size the endpoint claimed to accept and the deployment
+ * would reject with its own 413. The alternative — a signed Supabase upload URL
+ * and metadata posted here — was rejected because it puts the bytes in the
+ * bucket *before* the magic-byte check, which is the §6 requirement this route
+ * exists to satisfy. See `RESUME_MAX_BYTES`.
  *
- * TODO(phase-5): 20 uploads/hour per user, per the rate-limit table in §6.
+ * **20 uploads per hour per user (§6).** The one limit on an endpoint that
+ * writes to a second system: every accepted request is an object in the bucket,
+ * and a soft delete leaves the row behind, so the usual "they can only hurt
+ * themselves" reading does not hold — the storage bill is ours.
  */
 export async function POST(request: NextRequest): Promise<Response> {
   try {
     const user = await requireApiUser();
+
+    /*
+     * Before `formData()`, which is the whole point of putting it here: that
+     * call buffers the upload. Enforcing afterwards would mean reading up to
+     * 4 MB off the wire for every request we were going to refuse anyway, at
+     * which point a rate limit on an upload endpoint protects almost nothing.
+     */
+    await enforceRateLimit(RATE_LIMITS.resumeUpload, user.id);
 
     let form: FormData;
 
